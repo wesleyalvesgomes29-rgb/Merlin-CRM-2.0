@@ -1,0 +1,226 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+
+  /* Official Visual Identity Palette */
+  --color-orange-primary: #FF7A00;
+  --color-orange-light: #FF9800;
+  --color-orange-deep: #E85D00;
+  --color-orange-glow: rgba(255, 122, 0, 0.18);
+
+  --color-charcoal-base: #0B0B0B;
+  --color-charcoal-sidebar: #111111;
+  --color-charcoal-card: #161616;
+  --color-charcoal-elevated: #1F1F1F;
+  --color-graphite: #303030;
+  --color-border-subtle: #242424;
+  --color-border-medium: #303030;
+
+  --color-text-white: #FFFFFF;
+  --color-text-light: #F0F0F0;
+  --color-text-muted: #BDBDBD;
+
+  --color-semantic-success: #22C55E;
+  --color-semantic-warning: #F59E0B;
+  --color-semantic-urgency: #EF4444;
+}
+
+/* CSS Variables strictly rooted in Dark Charcoal & Orange */
+:root, .dark {
+  --merlin-bg: #0B0B0B;
+  --merlin-sidebar: #111111;
+  --merlin-header: #111111;
+  --merlin-surface: #161616;
+  --merlin-surface-raised: #1F1F1F;
+  --merlin-surface-glass: rgba(22, 22, 22, 0.95);
+  --merlin-border: #303030;
+  --merlin-border-subtle: #242424;
+  --merlin-border-highlight: rgba(255, 122, 0, 0.45);
+
+  --merlin-text-primary: #FFFFFF;
+  --merlin-text-secondary: #BDBDBD;
+  --merlin-text-muted: #888888;
+
+  /* Accent & Technology Tokens (Orange Identity) */
+  --merlin-accent-orange: #FF7A00;
+  --merlin-accent-light: #FF9800;
+  --merlin-accent-deep: #E85D00;
+  --merlin-ai-glow: rgba(255, 122, 0, 0.18);
+
+  /* Semantic Status tokens */
+  --merlin-urgency: #EF4444;
+  --merlin-urgency-bg: rgba(239, 68, 68, 0.12);
+  --merlin-urgency-border: rgba(239, 68, 68, 0.3);
+
+  --merlin-warning: #F59E0B;
+  --merlin-warning-bg: rgba(245, 158, 11, 0.12);
+  --merlin-warning-border: rgba(245, 158, 11, 0.3);
+
+  --merlin-success: #22C55E;
+  --merlin-success-bg: rgba(34, 197, 94, 0.12);
+  --merlin-success-border: rgba(34, 197, 94, 0.3);
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
+
+/* Base Body Style */
+body {
+  background-color: var(--merlin-bg);
+  color: var(--merlin-text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Typography Hierarchy */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display), var(--font-sans);
+  letter-spacing: -0.02em;
+}
+
+/* Discrete Futuristic SaaS Design Tokens */
+
+/* Controlled Glassmorphism */
+.merlin-glass {
+  background: var(--merlin-surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--merlin-border);
+}
+
+/* Standard Card Container */
+.merlin-card {
+  background-color: var(--merlin-surface);
+  border: 1px solid var(--merlin-border);
+  border-radius: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+/* Interactive Card with Micro-Elevation */
+.merlin-card-hover {
+  background-color: var(--merlin-surface);
+  border: 1px solid var(--merlin-border);
+  border-radius: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.merlin-card-hover:hover {
+  border-color: var(--merlin-border-highlight);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px -4px rgba(0, 0, 0, 0.4), 0 0 10px 0 var(--merlin-ai-glow);
+}
+
+/* AI Copilot Accents */
+.merlin-ai-pill {
+  background: rgba(253, 122, 0, 0.1);
+  border: 1px solid rgba(253, 122, 0, 0.3);
+  color: var(--merlin-accent-orange);
+}
+
+.merlin-ai-border {
+  border: 1px solid rgba(253, 122, 0, 0.35);
+  box-shadow: 0 0 14px -2px rgba(253, 122, 0, 0.15);
+}
+
+/* Primary Technology Button */
+.merlin-btn-primary {
+  background: linear-gradient(135deg, #ff9800 0%, #fd7a00 50%, #e85d00 100%);
+  color: #0b0b0b;
+  font-weight: 700;
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 10px -1px rgba(253, 122, 0, 0.3);
+  transition: all 0.15s ease;
+}
+
+.merlin-btn-primary:hover {
+  box-shadow: 0 4px 16px -1px rgba(253, 122, 0, 0.45);
+  transform: translateY(-0.5px);
+  filter: brightness(1.05);
+}
+
+.merlin-btn-primary:active {
+  transform: scale(0.98);
+}
+
+/* Secondary Button */
+.merlin-btn-secondary {
+  background-color: var(--merlin-surface-raised);
+  border: 1px solid var(--merlin-border);
+  color: var(--merlin-text-primary);
+  font-weight: 600;
+  border-radius: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.merlin-btn-secondary:hover {
+  background-color: var(--merlin-surface);
+  border-color: var(--merlin-border-highlight);
+}
+
+/* Input Fields */
+.merlin-input {
+  background-color: var(--merlin-surface-raised);
+  border: 1px solid var(--merlin-border);
+  color: var(--merlin-text-primary);
+  border-radius: 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.merlin-input:focus {
+  outline: none;
+  border-color: #fd7a00;
+  box-shadow: 0 0 0 1px #fd7a00;
+}
+
+/* Mobile Touch Support */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+}
+
+/* Utilities */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

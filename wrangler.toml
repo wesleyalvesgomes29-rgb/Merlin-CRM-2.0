@@ -1,0 +1,8 @@
+name = "merlin-crm"
+main = "src/worker.ts"
+compatibility_date = "2024-01-01"
+
+# Servir os arquivos estáticos do frontend do CRM gerados pelo Vite em ./dist
+[assets]
+directory = "./dist"
+binding = "ASSETS"
