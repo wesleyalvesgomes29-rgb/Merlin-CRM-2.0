@@ -46,6 +46,7 @@ import MyRoutine from './components/MyRoutine';
 import { motion, AnimatePresence } from 'motion/react';
 import MerlinChat from './components/MerlinChat';
 import { UserMenu } from './modules/auth';
+import merlinLogo from './assets/images/merlin_logo_transparent.png';
 
 export default function App() {
   // Global States
@@ -430,19 +431,19 @@ export default function App() {
       <aside className="hidden md:flex w-64 bg-[#111111] border-r border-[#303030] flex-col h-screen sticky top-0 p-4 text-white justify-between z-30 shadow-xs">
         <div className="space-y-5">
           {/* Logo Brand Header */}
-          <div className="flex items-center justify-between px-2 pt-1">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-gradient-to-br from-[#FF9800] via-[#FF7A00] to-[#E85D00] text-[#0B0B0B] shadow-md shadow-orange-500/25">
-                <Sparkles className="h-5 w-5" />
+          <div className="px-1 pt-1">
+            <div className="flex flex-col gap-1.5">
+              <div className="h-[60px] flex items-center">
+                <img
+                  src={merlinLogo}
+                  alt="Merlin CRM"
+                  className="h-[58px] max-h-[60px] w-auto max-w-[216px] object-contain object-left select-none"
+                  referrerPolicy="no-referrer"
+                />
               </div>
-              <div>
-                <h1 className="text-lg font-extrabold tracking-tight font-display text-white flex items-center gap-1.5">
-                  Merlin CRM
-                </h1>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF7A00] animate-pulse"></span>
-                  <span className="text-[10px] text-[#FF7A00] font-bold uppercase tracking-wider">Copiloto IA Ativo</span>
-                </div>
+              <div className="flex items-center gap-1.5 pl-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#FF7A00] animate-pulse"></span>
+                <span className="text-[10px] text-[#FF7A00] font-bold uppercase tracking-wider">Copiloto IA Ativo</span>
               </div>
             </div>
           </div>
