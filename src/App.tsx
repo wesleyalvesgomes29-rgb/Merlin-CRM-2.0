@@ -605,13 +605,13 @@ export default function App() {
 
       {/* 2. MOBILE HEADER (CLEAN & ERGONOMIC) */}
       <header className="md:hidden sticky top-0 z-40 bg-[#111111]/95 backdrop-blur-md border-b border-[#303030] px-4 py-2.5 flex items-center justify-between shadow-xs">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-gradient-to-br from-[#FF9800] via-[#FF7A00] to-[#E85D00] text-[#0B0B0B] shadow-xs">
-            <Sparkles className="h-4 w-4" />
-          </div>
-          <span className="font-extrabold text-base font-display tracking-tight text-white">
-            Merlin CRM
-          </span>
+        <div className="flex items-center">
+          <img
+            src={merlinLogo}
+            alt="Merlin CRM"
+            className="h-7 max-h-7 w-auto max-w-[130px] sm:max-w-[150px] object-contain object-left select-none"
+            referrerPolicy="no-referrer"
+          />
         </div>
 
         <div className="flex items-center gap-2">
