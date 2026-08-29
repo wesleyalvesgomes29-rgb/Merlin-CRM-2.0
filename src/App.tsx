@@ -398,6 +398,12 @@ export default function App() {
     saveStoredTasks(updated);
   };
 
+  const handleUpdateTask = (updatedTask: Task) => {
+    const updated = tasks.map(t => t.id === updatedTask.id ? updatedTask : t);
+    setTasks(updated);
+    saveStoredTasks(updated);
+  };
+
   // Calculate current alerts count for active notification badges
   const todayAlertsCount = clients.filter(c => {
     const alerts = getClientAlerts(c);
@@ -715,6 +721,10 @@ export default function App() {
                 engineResult={engineResult}
                 compact={false}
                 onSelectClient={setSelectedClientId}
+                onAddTask={handleAddTask}
+                onToggleTaskComplete={handleToggleTaskComplete}
+                onDeleteTask={handleDeleteTask}
+                onUpdateTask={handleUpdateTask}
               />
             </div>
           )}

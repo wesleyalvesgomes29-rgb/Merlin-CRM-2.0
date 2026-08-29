@@ -18,7 +18,12 @@ import {
   Lock,
   MessageCircle,
   Clock,
-  Briefcase
+  Briefcase,
+  Calendar,
+  CheckSquare,
+  CheckCircle2,
+  Trash2,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -34,6 +39,7 @@ export interface ChatMessage {
   sender: 'user' | 'merlin';
   text: string;
   timestamp: Date;
+  action?: any;
 }
 
 interface MerlinChatProps {
@@ -43,6 +49,10 @@ interface MerlinChatProps {
   engineResult?: EngineResult;
   compact?: boolean;
   onSelectClient?: (id: string) => void;
+  onAddTask?: (taskData: Omit<Task, 'id' | 'createdAt'>) => void;
+  onToggleTaskComplete?: (taskId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
+  onUpdateTask?: (task: Task) => void;
 }
 
 export default function MerlinChat({
@@ -51,7 +61,11 @@ export default function MerlinChat({
   sales,
   engineResult,
   compact = false,
-  onSelectClient
+  onSelectClient,
+  onAddTask,
+  onToggleTaskComplete,
+  onDeleteTask,
+  onUpdateTask
 }: MerlinChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -88,7 +102,7 @@ export default function MerlinChat({
       const overdueTasksCount = engineResult?.overdueTasks?.length || 0;
       const totalAlerts = (engineResult?.alerts?.length || 0);
 
-      let greetingText = `Olá, corretor! 👋 Eu sou o **Merlin**, seu Assistente Comercial Inteligente. \n\nAcabei de processar os dados da sua carteira de clientes usando o **Rules Engine** e identifiquei o seguinte status para hoje: \n`;
+      let greetingText = `Olá, corretor! 👋 Eu sou o **Merlin**, seu Assistente Comercial Inteligente e Second Brain.\n\nAcabei de processar os dados da sua carteira de clientes usando o **Rules Engine** e identifiquei o seguinte status para hoje:\n`;
 
       if (highPriorityCount > 0) {
         greetingText += `🔥 **${highPriorityCount}** cliente${highPriorityCount > 1 ? 's com alta prioridade' : ' com alta prioridade'} precisando de contato urgente.\n`;
@@ -101,6 +115,7 @@ export default function MerlinChat({
       }
 
       greetingText += `\nComo posso te ajudar agora? Você pode me pedir para:
+- **"Cria uma tarefa para amanhã às 8:30 para eu fazer 20 retrabalhos."** (Crio direto na Minha Rotina!)
 - **"Quais clientes devo chamar hoje?"** para ver as prioridades absolutas.
 - **"Crie uma mensagem para [Nome do Cliente]"** para gerar uma abordagem personalizada de WhatsApp.
 - **"Como está meu faturamento?"** para um resumo estratégico de suas comissões.`;
@@ -160,6 +175,69 @@ export default function MerlinChat({
 
       const data = await response.json();
       const replyText = data.text || 'Desculpe, corretor, tive um problema ao processar sua solicitação.';
+      const actionPayload = data.action || null;
+
+      // Execute structured actions seamlessly
+      if (actionPayload) {
+        if (actionPayload.type === 'create_task' && actionPayload.task) {
+          const t = actionPayload.task;
+          const taskData = {
+            clientId: t.clientId || undefined,
+            clientName: t.clientName || undefined,
+            actionType: t.actionType || 'Outro',
+            dueDate: t.dueDate,
+            dueTime: t.dueTime || undefined,
+            priority: t.priority || 'Média',
+            notes: t.notes || '',
+            completed: false
+          };
+
+          if (onAddTask) {
+            onAddTask(taskData);
+          }
+          window.dispatchEvent(new CustomEvent('merlin_create_task', { detail: taskData }));
+          addBrokerMemoryEntry('task_created', `Merlin criou a tarefa "${taskData.notes}" para ${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''}`, taskData.clientId, taskData.clientName);
+        } else if (actionPayload.type === 'reschedule_task' && actionPayload.taskId) {
+          const existing = tasks.find(t => t.id === actionPayload.taskId);
+          if (existing) {
+            const updatedTask: Task = {
+              ...existing,
+              dueDate: actionPayload.newDueDate || existing.dueDate,
+              dueTime: actionPayload.newDueTime !== undefined ? actionPayload.newDueTime : existing.dueTime
+            };
+            if (onUpdateTask) {
+              onUpdateTask(updatedTask);
+            } else if (onDeleteTask && onAddTask) {
+              onDeleteTask(existing.id);
+              onAddTask({
+                clientId: existing.clientId,
+                clientName: existing.clientName,
+                actionType: existing.actionType,
+                dueDate: updatedTask.dueDate,
+                dueTime: updatedTask.dueTime,
+                priority: existing.priority,
+                notes: existing.notes,
+                completed: false
+              });
+            }
+            window.dispatchEvent(new CustomEvent('merlin_update_task', { detail: updatedTask }));
+            addBrokerMemoryEntry('task_rescheduled', `Merlin reagendou a tarefa "${existing.notes || existing.actionType}" para ${updatedTask.dueDate}${updatedTask.dueTime ? ' às ' + updatedTask.dueTime : ''}`, existing.clientId, existing.clientName);
+          }
+        } else if (actionPayload.type === 'complete_task' && actionPayload.taskId) {
+          if (onToggleTaskComplete) {
+            onToggleTaskComplete(actionPayload.taskId);
+          }
+          window.dispatchEvent(new CustomEvent('merlin_complete_task', { detail: { taskId: actionPayload.taskId } }));
+          const completedTask = tasks.find(t => t.id === actionPayload.taskId);
+          addBrokerMemoryEntry('task_completed', `Merlin concluiu a tarefa "${completedTask?.notes || actionPayload.taskId}"`, completedTask?.clientId, completedTask?.clientName);
+        } else if (actionPayload.type === 'cancel_task' && actionPayload.taskId) {
+          if (onDeleteTask) {
+            onDeleteTask(actionPayload.taskId);
+          }
+          window.dispatchEvent(new CustomEvent('merlin_cancel_task', { detail: { taskId: actionPayload.taskId } }));
+          addBrokerMemoryEntry('task_deleted', `Merlin removeu a tarefa "${actionPayload.taskId}"`);
+        }
+      }
 
       setMessages(prev => [
         ...prev,
@@ -167,7 +245,8 @@ export default function MerlinChat({
           id: `merlin-${Date.now()}`,
           sender: 'merlin',
           text: replyText,
-          timestamp: new Date()
+          timestamp: new Date(),
+          action: actionPayload
         }
       ]);
 
@@ -265,6 +344,7 @@ export default function MerlinChat({
   };
 
   const suggestionChips = [
+    { label: '📅 Agendar 20 retrabalhos amanhã', text: 'Cria uma tarefa para amanhã às 8:30 para eu fazer 20 retrabalhos.' },
     { label: '🔥 Quem chamar hoje?', text: 'Merlin, quais clientes devo chamar hoje?' },
     { label: '📈 Análise da minha Carteira', text: 'Merlin, faça uma auditoria estratégica rápida na minha base de leads.' },
     { label: '💬 Mensagem para Franciene', text: 'Crie uma mensagem amigável para enviar para a Franciene agora.' },
@@ -492,6 +572,58 @@ export default function MerlinChat({
                       <div className="prose prose-invert max-w-none text-xs sm:text-sm space-y-1">
                         {parseBoldAndFormatting(msg.text)}
                       </div>
+
+                      {/* Action Confirmation Card */}
+                      {msg.action && (
+                        <div className="mt-3 p-3 rounded-xl bg-[#0B0B0B] border border-[#FF7A00]/30 space-y-2 text-left">
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#FF7A00]">
+                            <CheckCircle2 className="h-4 w-4 text-[#34D399] shrink-0" />
+                            <span>
+                              {msg.action.type === 'create_task' && 'Tarefa Adicionada à Minha Rotina'}
+                              {msg.action.type === 'reschedule_task' && 'Tarefa Reagendada'}
+                              {msg.action.type === 'complete_task' && 'Tarefa Concluída com Sucesso'}
+                              {msg.action.type === 'cancel_task' && 'Tarefa Cancelada'}
+                            </span>
+                          </div>
+                          
+                          {msg.action.type === 'create_task' && msg.action.task && (
+                            <div className="text-xs text-[#E5E5E5] space-y-1 pl-5">
+                              <p className="font-semibold text-white">
+                                {msg.action.task.notes || msg.action.task.actionType}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#888888]">
+                                <span className="flex items-center gap-1 bg-[#161616] px-2 py-0.5 rounded-md border border-[#303030]">
+                                  <Calendar className="h-3 w-3 text-[#FF7A00]" />
+                                  {msg.action.task.dueDate}
+                                </span>
+                                {msg.action.task.dueTime && (
+                                  <span className="flex items-center gap-1 bg-[#161616] px-2 py-0.5 rounded-md border border-[#303030]">
+                                    <Clock className="h-3 w-3 text-[#FF9800]" />
+                                    {msg.action.task.dueTime}
+                                  </span>
+                                )}
+                                {msg.action.task.clientName && (
+                                  <span className="bg-[#161616] px-2 py-0.5 rounded-md border border-[#303030] text-[#E5E5E5]">
+                                    Lead: {msg.action.task.clientName}
+                                  </span>
+                                )}
+                                <span className="bg-[#FF7A00]/10 text-[#FF7A00] px-2 py-0.5 rounded-md text-[9px] font-bold border border-[#FF7A00]/25">
+                                  {msg.action.task.actionType}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {msg.action.type === 'reschedule_task' && (
+                            <div className="text-xs text-[#E5E5E5] space-y-1 pl-5">
+                              <p className="text-[11px] text-[#888888]">
+                                Nova data: <strong className="text-white">{msg.action.newDueDate}</strong>
+                                {msg.action.newDueTime && <> às <strong className="text-white">{msg.action.newDueTime}</strong></>}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       
                       {/* Message Utility Bar */}
                       <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-[#303030] text-[10px] text-[#888888]">

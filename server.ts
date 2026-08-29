@@ -77,9 +77,32 @@ async function generateWithFallbackAndTimeout(
 }
 
 // Fallback generator for chat responses using local CRM intelligence when API key is unavailable/blocked
+// Helper: extract structured action JSON from response text
+function extractActionFromText(rawText: string): { cleanText: string; action: any | null } {
+  let action: any = null;
+  let cleanText = rawText;
+
+  const actionBlockMatch = rawText.match(/```(?:merlin_action|json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (actionBlockMatch) {
+    try {
+      const parsed = JSON.parse(actionBlockMatch[1]);
+      if (parsed && parsed.type) {
+        action = parsed;
+        cleanText = rawText.replace(actionBlockMatch[0], '').trim();
+      }
+    } catch (e) {
+      // not valid action JSON
+    }
+  }
+
+  return { cleanText, action };
+}
+
+// Fallback deterministic AI responses for when Gemini is offline or not configured
 function generateFallbackChatResponse(
   message: string,
   clients: any[] = [],
+  tasks: any[] = [],
   sales: any[] = [],
   engineResult?: any,
   brokerLearnedProfile?: any,
@@ -101,7 +124,355 @@ function generateFallbackChatResponse(
     return `${y}-${m}-${day}`;
   };
 
-  // CHECK: Task creation command vs mere statement
+  // Helper date calculator
+  const calculateTargetDate = (text: string) => {
+    const targetDate = new Date(refDate);
+    let dayLabel = "hoje";
+    const t = text.toLowerCase();
+
+    if (t.includes("amanhã") || t.includes("amanha")) {
+      targetDate.setDate(targetDate.getDate() + 1);
+      dayLabel = "amanhã";
+    } else if (t.includes("depois de amanhã") || t.includes("depois de amanha")) {
+      targetDate.setDate(targetDate.getDate() + 2);
+      dayLabel = "depois de amanhã";
+    } else if (t.includes("segunda")) {
+      const dist = (1 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "segunda-feira";
+    } else if (t.includes("terça") || t.includes("terca")) {
+      const dist = (2 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "terça-feira";
+    } else if (t.includes("quarta")) {
+      const dist = (3 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "quarta-feira";
+    } else if (t.includes("quinta")) {
+      const dist = (4 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "quinta-feira";
+    } else if (t.includes("sexta")) {
+      const dist = (5 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "sexta-feira";
+    } else if (t.includes("sábado") || t.includes("sabado")) {
+      const dist = (6 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "sábado";
+    } else if (t.includes("domingo")) {
+      const dist = (7 - targetDate.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + dist);
+      dayLabel = "domingo";
+    }
+
+    return { targetDate, dueDate: formatDateStr(targetDate), dayLabel };
+  };
+
+  // Helper time extractor
+  const extractDueTime = (text: string): string | undefined => {
+    const timeMatch1 = text.match(/(\d{1,2}):(\d{2})/);
+    const timeMatch2 = text.match(/(\d{1,2})\s*h(?:oras)?(?:\s*(\d{2}))?/i);
+    const timeMatch3 = text.match(/(?:às|as|ás)\s*(\d{1,2})/i);
+
+    if (timeMatch1) {
+      return `${String(timeMatch1[1]).padStart(2, '0')}:${timeMatch1[2]}`;
+    } else if (timeMatch2) {
+      const h = String(timeMatch2[1]).padStart(2, '0');
+      const m = timeMatch2[2] ? String(timeMatch2[2]).padStart(2, '0') : '00';
+      return `${h}:${m}`;
+    } else if (timeMatch3) {
+      const h = String(timeMatch3[1]).padStart(2, '0');
+      return `${h}:00`;
+    }
+    return undefined;
+  };
+
+  // Helper to find matching task in list with disambiguation
+  const findMatchingTask = (query: string): { task: any | null; ambiguous?: boolean; candidates?: any[] } => {
+    if (!tasks || tasks.length === 0) return { task: null };
+    const queryLower = query.toLowerCase();
+
+    // 1. Match by client name in task
+    const matchedByClient = tasks.filter(t => {
+      const clientName = (t.clientName || '').toLowerCase();
+      return clientName && queryLower.includes(clientName);
+    });
+    if (matchedByClient.length === 1) {
+      return { task: matchedByClient[0] };
+    }
+    if (matchedByClient.length > 1) {
+      return { task: null, ambiguous: true, candidates: matchedByClient };
+    }
+
+    // 2. Match by distinct keywords in notes
+    const matchedByNotes = tasks.filter(t => {
+      const notes = (t.notes || '').toLowerCase();
+      if (!notes) return false;
+      const words = queryLower.split(/[\s,.:;!?-]+/).filter(w => w.length > 3 && !['segunda', 'terça', 'terca', 'quarta', 'quinta', 'sexta', 'sábado', 'sabado', 'domingo', 'amanhã', 'amanha', 'hoje', 'tarde', 'noite', 'manhã', 'manha', 'tarefa', 'para', 'fazer'].includes(w));
+      return words.length > 0 && words.some(w => notes.includes(w));
+    });
+    if (matchedByNotes.length === 1) {
+      return { task: matchedByNotes[0] };
+    }
+    if (matchedByNotes.length > 1) {
+      return { task: null, ambiguous: true, candidates: matchedByNotes };
+    }
+
+    // 3. Pronoun resolution ("ela", "essa", "esta tarefa", "isso", "a tarefa"):
+    // Check pending tasks
+    const pendingTasks = tasks.filter(t => !t.completed);
+    if (pendingTasks.length === 1) {
+      return { task: pendingTasks[0] };
+    }
+    if (pendingTasks.length > 1) {
+      // If ambiguous, return first as most recently manipulated/created or report candidates
+      return { task: pendingTasks[0] };
+    }
+
+    return { task: tasks[0] };
+  };
+
+  // 1. CHECK: RESCHEDULE / ADIAR TAREFA
+  const isRescheduleCommand = (
+    // Joga / Jogue / Jogar
+    lower.includes("joga ela") ||
+    lower.includes("jogue ela") ||
+    lower.includes("jogar ela") ||
+    lower.includes("joga essa") ||
+    lower.includes("jogue essa") ||
+    lower.includes("joga esta") ||
+    lower.includes("jogue esta") ||
+    lower.includes("joga para") ||
+    lower.includes("jogue para") ||
+    lower.includes("jogar para") ||
+    // Passa / Passe / Passar
+    lower.includes("passa ela") ||
+    lower.includes("passe ela") ||
+    lower.includes("passar ela") ||
+    lower.includes("passa essa") ||
+    lower.includes("passe essa") ||
+    lower.includes("passar essa") ||
+    lower.includes("passa a tarefa") ||
+    lower.includes("passe a tarefa") ||
+    lower.includes("passar a tarefa") ||
+    lower.includes("passa para") ||
+    lower.includes("passe para") ||
+    // Muda / Mude / Mudar
+    lower.includes("muda ela") ||
+    lower.includes("mude ela") ||
+    lower.includes("mudar ela") ||
+    lower.includes("muda essa") ||
+    lower.includes("mude essa") ||
+    lower.includes("mudar essa") ||
+    lower.includes("muda a data") ||
+    lower.includes("mude a data") ||
+    lower.includes("mudar a data") ||
+    lower.includes("muda o horário") ||
+    lower.includes("mude o horário") ||
+    lower.includes("muda o horario") ||
+    lower.includes("mude o horario") ||
+    lower.includes("mudar o horário") ||
+    lower.includes("mudar o horario") ||
+    lower.includes("muda para") ||
+    lower.includes("mude para") ||
+    // Adia / Adie / Adiar
+    lower.includes("adia ela") ||
+    lower.includes("adie ela") ||
+    lower.includes("adiar ela") ||
+    lower.includes("adia essa") ||
+    lower.includes("adie essa") ||
+    lower.includes("adiar essa") ||
+    lower.includes("adia a tarefa") ||
+    lower.includes("adie a tarefa") ||
+    lower.includes("adiar a tarefa") ||
+    lower.includes("adia tarefa") ||
+    lower.includes("adie tarefa") ||
+    lower.includes("adiar tarefa") ||
+    lower.includes("adia para") ||
+    lower.includes("adie para") ||
+    // Reagenda / Reagende / Reagendar
+    lower.includes("reagenda ela") ||
+    lower.includes("reagende ela") ||
+    lower.includes("reagendar ela") ||
+    lower.includes("reagenda essa") ||
+    lower.includes("reagende essa") ||
+    lower.includes("reagendar essa") ||
+    lower.includes("reagenda a tarefa") ||
+    lower.includes("reagende a tarefa") ||
+    lower.includes("reagendar a tarefa") ||
+    lower.includes("reagenda tarefa") ||
+    lower.includes("reagende tarefa") ||
+    lower.includes("reagendar tarefa") ||
+    lower.includes("reagenda para") ||
+    lower.includes("reagende para")
+  );
+
+  if (isRescheduleCommand) {
+    const matchResult = findMatchingTask(lower);
+    if (matchResult.ambiguous && matchResult.candidates) {
+      return {
+        text: `Encontrei mais de uma tarefa pendente que pode ser essa (${matchResult.candidates.map(c => `"${c.notes || c.actionType}"`).join(" ou ")}). Qual delas você deseja reagendar, corretor?`,
+        action: null
+      };
+    }
+
+    const matchingTask = matchResult.task;
+    if (!matchingTask) {
+      return {
+        text: `Não encontrei nenhuma tarefa correspondente para reagendar no momento, corretor! 🤔\n\nVocê pode me dizer qual tarefa deseja adiar ou abrir a **Minha Rotina** para conferir suas atividades.`,
+        action: null
+      };
+    }
+
+    const hasDateMention = (
+      lower.includes("segunda") || lower.includes("terça") || lower.includes("terca") ||
+      lower.includes("quarta") || lower.includes("quinta") || lower.includes("sexta") ||
+      lower.includes("sábado") || lower.includes("sabado") || lower.includes("domingo") ||
+      lower.includes("amanhã") || lower.includes("amanha") || lower.includes("hoje") ||
+      lower.includes("depois de amanhã") || lower.includes("depois de amanha")
+    );
+
+    let finalDueDate = matchingTask.dueDate;
+    let dayLabel = "data atual";
+    if (hasDateMention) {
+      const calc = calculateTargetDate(lower);
+      finalDueDate = calc.dueDate;
+      dayLabel = calc.dayLabel;
+    }
+
+    const dueTime = extractDueTime(lower) || matchingTask.dueTime;
+    const timeFormatted = dueTime ? ` às **${dueTime}**` : '';
+    const taskName = matchingTask.notes || matchingTask.actionType || 'Tarefa';
+
+    return {
+      text: `Pronto, corretor! Reagendei a tarefa **"${taskName}"** para **${hasDateMention ? dayLabel : finalDueDate}**${timeFormatted}. Sua **Minha Rotina** já foi atualizada! 🚀`,
+      action: {
+        type: 'reschedule_task',
+        taskId: matchingTask.id,
+        newDueDate: finalDueDate,
+        newDueTime: dueTime,
+        taskTitle: taskName
+      }
+    };
+  }
+
+  // 2. CHECK: CONCLUIR TAREFA
+  const isCompleteCommand = (
+    lower.includes("concluí essa") ||
+    lower.includes("conclui essa") ||
+    lower.includes("conclua essa") ||
+    lower.includes("concluir essa") ||
+    lower.includes("concluí ela") ||
+    lower.includes("conclui ela") ||
+    lower.includes("conclua ela") ||
+    lower.includes("concluir ela") ||
+    lower.includes("terminei essa") ||
+    lower.includes("terminei ela") ||
+    lower.includes("terminei a tarefa") ||
+    lower.includes("conclui a tarefa") ||
+    lower.includes("conclua a tarefa") ||
+    lower.includes("concluir tarefa") ||
+    lower.includes("marcar como concluída") ||
+    lower.includes("marca como concluída") ||
+    lower.includes("marcar como concluida") ||
+    lower.includes("marca como concluida") ||
+    lower.includes("pode marcar como concluíd") ||
+    lower.includes("pode marcar como concluid") ||
+    lower.includes("já liguei") ||
+    lower.includes("ja liguei") ||
+    lower.includes("já fiz") ||
+    lower.includes("ja fiz") ||
+    lower.includes("já enviei") ||
+    lower.includes("ja enviei") ||
+    lower.includes("já mandei") ||
+    lower.includes("ja mandei")
+  );
+
+  if (isCompleteCommand) {
+    const matchResult = findMatchingTask(lower);
+    if (matchResult.ambiguous && matchResult.candidates) {
+      return {
+        text: `Encontrei mais de uma tarefa pendente (${matchResult.candidates.map(c => `"${c.notes || c.actionType}"`).join(" ou ")}). Qual delas você concluiu, corretor?`,
+        action: null
+      };
+    }
+
+    const matchingTask = matchResult.task;
+    if (!matchingTask) {
+      return {
+        text: `Não encontrei tarefas pendentes correspondentes para marcar como concluída, corretor! 🤔\n\nCaso queira, dê uma olhadinha na aba **Minha Rotina**.`,
+        action: null
+      };
+    }
+
+    const taskName = matchingTask.notes || matchingTask.actionType || 'Tarefa';
+
+    return {
+      text: `Sensacional, corretor! Marquei a tarefa **"${taskName}"** como **concluída** no seu CRM. Mais um passo em direção ao fechamento! ✅`,
+      action: {
+        type: 'complete_task',
+        taskId: matchingTask.id,
+        taskTitle: taskName
+      }
+    };
+  }
+
+  // 3. CHECK: CANCELAR / EXCLUIR TAREFA
+  const isCancelCommand = (
+    lower.includes("cancela essa") ||
+    lower.includes("cancele essa") ||
+    lower.includes("cancelar essa") ||
+    lower.includes("cancela ela") ||
+    lower.includes("cancele ela") ||
+    lower.includes("cancelar ela") ||
+    lower.includes("cancela a tarefa") ||
+    lower.includes("cancelar a tarefa") ||
+    lower.includes("cancela tarefa") ||
+    lower.includes("cancelar tarefa") ||
+    lower.includes("não preciso mais fazer") ||
+    lower.includes("nao preciso mais fazer") ||
+    lower.includes("exclui essa") ||
+    lower.includes("exclua essa") ||
+    lower.includes("excluir essa") ||
+    lower.includes("exclui ela") ||
+    lower.includes("exclua ela") ||
+    lower.includes("excluir ela") ||
+    lower.includes("apaga essa") ||
+    lower.includes("apague essa") ||
+    lower.includes("apagar essa")
+  );
+
+  if (isCancelCommand) {
+    const matchResult = findMatchingTask(lower);
+    if (matchResult.ambiguous && matchResult.candidates) {
+      return {
+        text: `Encontrei mais de uma tarefa (${matchResult.candidates.map(c => `"${c.notes || c.actionType}"`).join(" ou ")}). Qual delas você deseja cancelar, corretor?`,
+        action: null
+      };
+    }
+
+    const matchingTask = matchResult.task;
+    if (!matchingTask) {
+      return {
+        text: `Não localizei a tarefa que você deseja cancelar, corretor! 🤔\n\nQualquer dúvida, você pode gerenciá-la diretamente na aba **Minha Rotina**.`,
+        action: null
+      };
+    }
+
+    const taskName = matchingTask.notes || matchingTask.actionType || 'Tarefa';
+
+    return {
+      text: `Pronto, corretor! Removi a tarefa **"${taskName}"** da sua **Minha Rotina**. 🗑️`,
+      action: {
+        type: 'cancel_task',
+        taskId: matchingTask.id,
+        taskTitle: taskName
+      }
+    };
+  }
+
+  // 4. CHECK: TASK CREATION COMMAND VS MERE STATEMENT
   const isCreationCommand = (
     lower.includes("quero fazer") ||
     lower.includes("quero agendar") ||
@@ -111,18 +482,24 @@ function generateFallbackChatResponse(
     lower.includes("cria uma tarefa") ||
     lower.includes("criar tarefa") ||
     lower.includes("crie tarefa") ||
+    lower.includes("cria tarefa") ||
     lower.includes("adicione na rotina") ||
+    lower.includes("adicione na minha rotina") ||
     lower.includes("coloque na minha rotina") ||
     lower.includes("coloque na rotina") ||
     lower.includes("agende uma tarefa") ||
+    lower.includes("agendar uma tarefa") ||
     lower.includes("agendar tarefa") ||
     lower.includes("agende para") ||
     lower.includes("agendar para") ||
     lower.includes("crie para") ||
+    lower.includes("cria para") ||
     lower.includes("marca para") ||
     lower.includes("marque para") ||
     lower.includes("marcar para") ||
-    lower.includes("lembre-me de")
+    lower.includes("lembre-me de") ||
+    lower.includes("me lembra de") ||
+    lower.includes("me lembre de")
   );
 
   const isMereStatement = (
@@ -131,11 +508,12 @@ function generateFallbackChatResponse(
       lower.includes("tenho que fazer") ||
       lower.includes("preciso ligar") ||
       lower.includes("tenho que ligar") ||
-      lower.includes("devo fazer")
+      lower.includes("devo fazer") ||
+      lower.includes("vou fazer")
     )
   );
 
-  // If it is a mere statement without explicit command, ask safely
+  // If it is a mere statement without explicit command, ask safely without inventing action
   if (isMereStatement) {
     return {
       text: `Entendi que você tem esse compromisso em mente, corretor! 🤔\n\nVocê gostaria que eu **crie essa tarefa na sua Minha Rotina**? Se sim, me confirme em qual data e horário você prefere (ex: *"Merlin, crie a tarefa para amanhã às 08:30"*).`,
@@ -146,77 +524,37 @@ function generateFallbackChatResponse(
   // If it IS a clear task creation command
   if (isCreationCommand) {
     // 1. Calculate Date
-    const targetDate = new Date(refDate);
-    let dayLabel = "hoje";
-
-    if (lower.includes("amanhã") || lower.includes("amanha")) {
-      targetDate.setDate(targetDate.getDate() + 1);
-      dayLabel = "amanhã";
-    } else if (lower.includes("depois de amanhã") || lower.includes("depois de amanha")) {
-      targetDate.setDate(targetDate.getDate() + 2);
-      dayLabel = "depois de amanhã";
-    } else if (lower.includes("segunda")) {
-      const dist = (1 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "segunda-feira";
-    } else if (lower.includes("terça") || lower.includes("terca")) {
-      const dist = (2 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "terça-feira";
-    } else if (lower.includes("quarta")) {
-      const dist = (3 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "quarta-feira";
-    } else if (lower.includes("quinta")) {
-      const dist = (4 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "quinta-feira";
-    } else if (lower.includes("sexta")) {
-      const dist = (5 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "sexta-feira";
-    } else if (lower.includes("sábado") || lower.includes("sabado")) {
-      const dist = (6 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "sábado";
-    } else if (lower.includes("domingo")) {
-      const dist = (7 - targetDate.getDay() + 7) % 7 || 7;
-      targetDate.setDate(targetDate.getDate() + dist);
-      dayLabel = "domingo";
-    }
-
-    const dueDate = formatDateStr(targetDate);
+    const { targetDate, dueDate, dayLabel } = calculateTargetDate(lower);
 
     // 2. Extract Time
-    let dueTime: string | undefined = undefined;
-    const timeMatch1 = message.match(/(\d{1,2}):(\d{2})/);
-    const timeMatch2 = message.match(/(\d{1,2})\s*h(?:oras)?(?:\s*(\d{2}))?/i);
-
-    if (timeMatch1) {
-      dueTime = `${String(timeMatch1[1]).padStart(2, '0')}:${timeMatch1[2]}`;
-    } else if (timeMatch2) {
-      const h = String(timeMatch2[1]).padStart(2, '0');
-      const m = timeMatch2[2] ? String(timeMatch2[2]).padStart(2, '0') : '00';
-      dueTime = `${h}:${m}`;
-    }
+    const dueTime = extractDueTime(message);
 
     // 3. Extract Client if mentioned
     let matchedClient: any = undefined;
     if (clients && clients.length > 0) {
-      matchedClient = clients.find((c: any) => c.name && lower.includes(c.name.toLowerCase()));
+      // Find matching client
+      const potentialClients = clients.filter((c: any) => c.name && lower.includes(c.name.toLowerCase()));
+      if (potentialClients.length === 1) {
+        matchedClient = potentialClients[0];
+      } else if (potentialClients.length > 1) {
+        return {
+          text: `Encontrei mais de um cliente compatível com esse nome (${potentialClients.map((c: any) => c.name).join(", ")}). Para qual deles você deseja criar a tarefa?`,
+          action: null
+        };
+      }
     }
 
     // 4. Extract Action Type
     let actionType = 'Outro';
-    if (lower.includes('retrabalho') || lower.includes('whatsapp') || lower.includes('whats') || lower.includes('mensagem')) {
+    if (lower.includes('retrabalho') || lower.includes('whatsapp') || lower.includes('whats') || lower.includes('zap') || lower.includes('mensagem') || lower.includes('msg')) {
       actionType = 'WhatsApp';
     } else if (lower.includes('ligar') || lower.includes('ligação') || lower.includes('ligacao') || lower.includes('telefone') || lower.includes('chamar')) {
       actionType = 'Ligação';
-    } else if (lower.includes('visita') || lower.includes('visitar') || lower.includes('decorado') || lower.includes('imóvel') || lower.includes('imovel')) {
+    } else if (lower.includes('visita') || lower.includes('visitar') || lower.includes('decorado') || lower.includes('imóvel') || lower.includes('imovel') || lower.includes('plantão') || lower.includes('plantao')) {
       actionType = 'Visita ao Imóvel';
-    } else if (lower.includes('proposta') || lower.includes('enviar proposta')) {
+    } else if (lower.includes('proposta') || lower.includes('enviar proposta') || lower.includes('simulação') || lower.includes('simulacao')) {
       actionType = 'Enviar Proposta';
-    } else if (lower.includes('reunião') || lower.includes('reuniao')) {
+    } else if (lower.includes('reunião') || lower.includes('reuniao') || lower.includes('alinhamento')) {
       actionType = 'Reunião';
     } else if (lower.includes('contrato') || lower.includes('documento') || lower.includes('docs')) {
       actionType = 'Contrato / Docs';
@@ -224,25 +562,26 @@ function generateFallbackChatResponse(
 
     // 5. Extract Notes / Description
     let cleanNotes = message;
-    // Remove prefixes like "merlin,", "crie uma tarefa para amanhã às 8:30", "quero fazer", etc.
     cleanNotes = cleanNotes
       .replace(/^merlin[,\s:]*/i, '')
-      .replace(/(?:por favor|quero|crie|criar|agende|agendar|adicione|coloque|marca|marque)\s+(?:uma\s+tarefa|na\s+rotina|na\s+minha\s+rotina|para|a\s+tarefa)*/gi, '')
+      .replace(/(?:por favor|quero|crie|criar|cria|agende|agendar|adicione|coloque|marca|marque|marcar|me\s+lembra\s+de|me\s+lembre\s+de|lembre-me\s+de)\s*(?:uma\s+tarefa|na\s+rotina|na\s+minha\s+rotina|para|a\s+tarefa)*/gi, '')
       .replace(/(?:amanhã|amanha|hoje|depois de amanhã|segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo)/gi, '')
       .replace(/(?:às|as|ás|\sat\s)\s*\d{1,2}(?::\d{2}|h(?:\d{2})?)/gi, '')
-      .replace(/^(?:para\s+|de\s+|que\s+|fazer\s+)*/i, '')
+      .replace(/^[\s,.:;!?-]+/, '')
+      .replace(/^(?:para\s+eu\s+|para\s+mim\s+|para\s+|de\s+|que\s+|eu\s+)+/i, '')
+      .replace(/^[\s,.:;!?-]+/, '')
       .trim();
 
-    if (!cleanNotes || cleanNotes.length < 3) {
-      if (lower.includes('retrabalho')) {
-        cleanNotes = 'Fazer retrabalhos';
-      } else if (matchedClient) {
-        cleanNotes = `${actionType} para ${matchedClient.name}`;
-      } else {
-        cleanNotes = 'Tarefa agendada pelo Merlin';
+    // If description is missing/empty, ask user for details without creating arbitrary task
+    if (!cleanNotes || cleanNotes.length < 2) {
+      if (lower.includes('tarefa para')) {
+        return {
+          text: `Com certeza, corretor! O que você gostaria que eu colocasse como descrição/ação dessa tarefa?`,
+          action: null
+        };
       }
+      cleanNotes = 'Tarefa comercial';
     } else {
-      // Capitalize first letter
       cleanNotes = cleanNotes.charAt(0).toUpperCase() + cleanNotes.slice(1);
     }
 
@@ -548,26 +887,40 @@ app.post("/api/gemini/chat", async (req, res) => {
       description: t.description
     })) : [];
 
-    const systemPrompt = `Você é o Merlin, o assistente comercial pessoal e consultor estratégico de vendas integrado ao CRM de um corretor de imóveis.
+    const activeTasksBrief = tasks ? tasks.slice(0, 30).map((t: any) => ({
+      id: t.id,
+      clientName: t.clientName || "Sem cliente",
+      actionType: t.actionType,
+      dueDate: t.dueDate,
+      dueTime: t.dueTime || "",
+      notes: t.notes || "",
+      priority: t.priority || "Média",
+      completed: t.completed || false
+    })) : [];
+
+    const systemPrompt = `Você é o Merlin, o assistente comercial pessoal e consultor estratégico de vendas integrado ao CRM de um corretor de imóveis (Merlin Second Brain).
 Sua personalidade é extremamente humana, prestativa, entusiasmada, direta, confiante e focada em resultados reais de vendas (fechar negócios, resgatar contatos e gerenciar tarefas de forma impecável).
 O cérebro do Merlin é a IA, seus dados são o CRM, seus olhos são o Rules Engine e o chat é a sua forma de se comunicar.
 
-Aqui estão os dados reais da carteira do corretor no CRM neste momento. Baseie suas respostas 100% nestes dados! Se o corretor pedir para preparar mensagens ou analisar clientes, cite apenas pessoas que realmente existam nesta lista:
+Aqui estão os dados reais da carteira do corretor no CRM neste momento. Baseie suas respostas 100% nestes dados! Se o corretor pedir para preparar mensagens, analisar clientes ou gerenciar tarefas, cite apenas pessoas e tarefas que realmente existam nesta lista:
 
 1. CLIENTES CADASTRADOS (Total: ${totalLeads}):
 ${JSON.stringify(clientsListBrief.slice(0, 40), null, 2)}
 
-2. ANÁLISE DO RULES ENGINE (OLHOS DO MERLIN):
+2. TAREFAS ATUAIS NA ROTINA DO CORRETOR:
+${JSON.stringify(activeTasksBrief, null, 2)}
+
+3. ANÁLISE DO RULES ENGINE (OLHOS DO MERLIN):
 - Clientes de Alta Prioridade: ${JSON.stringify(prioritiesBrief, null, 2)}
 - Alertas e Gargalos Gerais: ${JSON.stringify(alertsBrief, null, 2)}
 - Tarefas Agendadas para Hoje: ${JSON.stringify(todayTasksBrief, null, 2)}
 - Tarefas Atrasadas/Pendentes: ${JSON.stringify(overdueTasksBrief, null, 2)}
 
-3. DADOS DE VENDAS E PERFORMANCE:
+4. DADOS DE VENDAS E PERFORMANCE:
 - Quantidade de vendas fechadas: ${salesCount}
 - Comissão acumulada do corretor: R$ ${totalCommission.toLocaleString('pt-BR')}
 
-${brokerLearnedProfile ? `4. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEMÓRIA APRENDIDA):
+${brokerLearnedProfile ? `5. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEMÓRIA APRENDIDA):
 - Estilo de Comunicação Aprendido: ${brokerLearnedProfile.communicationStyle}
 - Forma de Abordagem Aprendida: ${brokerLearnedProfile.approachStyle}
 - Preferências de Atendimento: ${brokerLearnedProfile.preferences}
@@ -576,19 +929,64 @@ ${brokerLearnedProfile ? `4. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEM
 *Diretriz de Aprendizado*: Adapte todas as abordagens, scripts, sugestões de conversas e orientações aos pontos acima. Respeite o estilo e a forma de trabalho do corretor, aprimorando-a estrategicamente.
 ` : ''}
 
-${brokerMemory && brokerMemory.length > 0 ? `5. HISTÓRICO RECENTE DE INTERAÇÕES E MEMÓRIA DE USO DO CORRETOR:
+${brokerMemory && brokerMemory.length > 0 ? `6. HISTÓRICO RECENTE DE INTERAÇÕES E MEMÓRIA DE USO DO CORRETOR:
 ${JSON.stringify(brokerMemory.slice(0, 10), null, 2)}
 
-*Diretriz de Uso*: Use este histórico para entender quais mensagens foram geradas, quais foram copiadas e quais interações (como comentários e status) o corretor executou ultimamente. Dê retornos acionáveis que usem esse contexto!
+*Diretriz de Uso*: Use este histórico para entender quais mensagens foram geradas, quais foram copiadas e quais interações o corretor executou ultimamente.
 ` : ''}
 
 Diretrizes de resposta (Siga à risca!):
-- Cumprimente o usuário tratando-o carinhosamente como "corretor" (ou pelo nome dele caso o sistema envie um nome específico de usuário autenticado no futuro, mas atualmente utilize o termo "corretor"). Nunca utilize referências fixas ao nome "Wesley". Ex: "Olá, corretor! 👋" ou "Bom dia, corretor!".
-- Quando ele perguntar "quais clientes chamar hoje?", "o que fazer hoje?" ou "quais as prioridades?", faça uma síntese direta dos Clientes de Alta Prioridade e Tarefas Atrasadas. Cite os nomes deles e as ações recomendadas (ex: "João Silva - pendente de simulação há 5 dias"). Organize em formato de lista Markdown elegante.
-- Se ele solicitar scripts ou mensagens para um cliente (ex: "Crie uma mensagem para a Franciene"), procure o cliente pelo nome aproximado nos Clientes Cadastrados. Se achar, use o empreendimento dele e o histórico para formular uma mensagem de WhatsApp fantástica, amigável, humana, natural, com quebras de linha e gatilhos amigáveis (ex: "Oi Franciene, tudo bem? Vi aqui que..."). Retorne o texto pronto para ser copiado. Se não achar o cliente por esse nome exato, pergunte educadamente sobre qual cliente ele está se referindo ou peça mais detalhes.
-- Se ele pedir uma análise geral ou de performance da carteira, use os dados acima para destacar pontos fortes e os principais gargalos (ex: "Você tem X clientes sem retorno marcado. Vamos agendar para eles hoje?").
-- Use sempre um tom profissional de parceria, de um gerente ou mentor que quer ver o corretor bater a meta de comissão acumulada (atualmente de R$ ${totalCommission.toLocaleString('pt-BR')}).
-- Apresente tudo formatado de forma limpa, com subtítulos e bullet points, mas NUNCA mostre estruturas de código JSON na resposta final para o corretor.`;
+- Cumprimente o usuário tratando-o carinhosamente como "corretor".
+- Quando ele perguntar "quais clientes chamar hoje?", "o que fazer hoje?" ou "quais as prioridades?", faça uma síntese direta dos Clientes de Alta Prioridade e Tarefas Atrasadas. Cite os nomes deles e as ações recomendadas.
+- Se ele solicitar scripts ou mensagens para um cliente, formule mensagens naturais de WhatsApp prontas para envio.
+- GESTÃO DE TAREFAS (MERLIN SECOND BRAIN):
+  Se o corretor pedir explicitamente para:
+  1. CRIAR UMA TAREFA (ex: "Cria uma tarefa para amanhã às 8:30 para eu fazer 20 retrabalhos", "Me lembra de ligar para o João amanhã às 14h"):
+     Se faltar a descrição do que fazer, pergunte ao corretor o que deve ser feito e NÃO crie ação.
+     Se houver descrição clara, confirme amigavelmente e inclua no final da resposta o bloco:
+     \`\`\`merlin_action
+     {
+       "type": "create_task",
+       "task": {
+         "clientId": "id_do_cliente_se_houver",
+         "clientName": "nome_do_cliente_se_houver",
+         "actionType": "WhatsApp" | "Ligação" | "Visita ao Imóvel" | "Enviar Proposta" | "Reunião" | "Contrato / Docs" | "Outro",
+         "dueDate": "YYYY-MM-DD",
+         "dueTime": "HH:MM",
+         "priority": "Alta" | "Média" | "Baixa",
+         "notes": "Descrição da tarefa"
+       }
+     }
+     \`\`\`
+  2. REAGENDAR UMA TAREFA (ex: "Passa essa tarefa para amanhã", "Joga a ligação da Maria para sexta às 15h"):
+     Identifique a tarefa pelo nome do cliente ou descrição nas Tarefas Atuais. Inclua no final:
+     \`\`\`merlin_action
+     {
+       "type": "reschedule_task",
+       "taskId": "id_da_tarefa_existente",
+       "newDueDate": "YYYY-MM-DD",
+       "newDueTime": "HH:MM"
+     }
+     \`\`\`
+  3. CONCLUIR UMA TAREFA (ex: "Terminei essa tarefa", "Pode marcar os 20 retrabalhos como concluídos", "Já liguei para o João"):
+     Identifique a tarefa nas Tarefas Atuais. Inclua no final:
+     \`\`\`merlin_action
+     {
+       "type": "complete_task",
+       "taskId": "id_da_tarefa_existente"
+     }
+     \`\`\`
+  4. CANCELAR UMA TAREFA (ex: "Cancela essa tarefa", "Não preciso mais fazer essa ligação"):
+     Identifique a tarefa nas Tarefas Atuais. Inclua no final:
+     \`\`\`merlin_action
+     {
+       "type": "cancel_task",
+       "taskId": "id_da_tarefa_existente"
+     }
+     \`\`\`
+- REGRAS CRÍTICAS:
+  - NUNCA invente clientes, tarefas, datas ou horários que não foram informados.
+  - Se for apenas um desabafo/afirmação sem comando explícito (ex: "Preciso fazer retrabalho amanhã"), apenas pergunte educadamente se deseja agendar na Minha Rotina.`;
 
     const userPrompt = `Histórico recente do chat:
 ${history ? history.map((h: any) => `${h.sender === "user" ? "Corretor" : "Merlin"}: ${h.text}`).join("\n") : ""}
@@ -600,18 +998,20 @@ Escreva sua resposta de forma direta, amigável e extremamente acionável:`;
 
     try {
       const ai = getGoogleGenAI();
-      const text = await generateWithFallbackAndTimeout(ai, userPrompt, systemPrompt, 0.75);
-      return res.json({ text });
+      const rawText = await generateWithFallbackAndTimeout(ai, userPrompt, systemPrompt, 0.75);
+      const { cleanText, action } = extractActionFromText(rawText);
+      return res.json({ text: cleanText, action });
     } catch (aiError: any) {
       console.warn("[Merlin Server] Gemini API indisponível, usando fallback inteligente de chat:", aiError.message);
       const fallbackResponse = generateFallbackChatResponse(
         message,
         clients,
+        tasks,
         sales,
         engineResult,
         brokerLearnedProfile
       );
-      return res.json({ text: fallbackResponse });
+      return res.json(fallbackResponse);
     }
   } catch (error: any) {
     console.error("Erro no chat do Merlin:", error);

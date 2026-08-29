@@ -168,7 +168,7 @@ export function saveStoredTasks(tasks: Task[]) {
 // BROKER MEMORY MODELS & HELPERS (MEMÓRIA DO CORRETOR)
 export interface BrokerMemoryEntry {
   id: string;
-  type: 'interaction' | 'message_generated' | 'message_copied' | 'comment_added' | 'status_changed' | 'sale_added' | 'task_completed' | 'client_created' | 'contact_registered';
+  type: 'interaction' | 'message_generated' | 'message_copied' | 'comment_added' | 'status_changed' | 'sale_added' | 'task_completed' | 'task_created' | 'task_rescheduled' | 'task_deleted' | 'client_created' | 'contact_registered';
   clientId?: string;
   clientName?: string;
   content: string;

@@ -81,6 +81,26 @@ async function generateWithFallbackAndTimeout(
   throw lastError || new Error("Falha ao gerar conteúdo com todos os modelos disponíveis.");
 }
 
+function extractActionFromText(rawText: string): { cleanText: string; action: any | null } {
+  let action: any = null;
+  let cleanText = rawText;
+
+  const actionBlockMatch = rawText.match(/```(?:merlin_action|json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (actionBlockMatch) {
+    try {
+      const parsed = JSON.parse(actionBlockMatch[1]);
+      if (parsed && parsed.type) {
+        action = parsed;
+        cleanText = rawText.replace(actionBlockMatch[0], '').trim();
+      }
+    } catch (e) {
+      // not valid action JSON
+    }
+  }
+
+  return { cleanText, action };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -285,26 +305,40 @@ Seja direto, motivador e focado em resultados rápidos. Retorne a resposta em fo
           description: t.description
         })) : [];
 
-        const systemPrompt = `Você é o Merlin, o assistente comercial pessoal e consultor estratégico de vendas integrado ao CRM de um corretor de imóveis.
+        const activeTasksBrief = tasks ? tasks.slice(0, 30).map((t: any) => ({
+          id: t.id,
+          clientName: t.clientName || "Sem cliente",
+          actionType: t.actionType,
+          dueDate: t.dueDate,
+          dueTime: t.dueTime || "",
+          notes: t.notes || "",
+          priority: t.priority || "Média",
+          completed: t.completed || false
+        })) : [];
+
+        const systemPrompt = `Você é o Merlin, o assistente comercial pessoal e consultor estratégico de vendas integrado ao CRM de um corretor de imóveis (Merlin Second Brain).
 Sua personalidade é extremamente humana, prestativa, entusiasmada, direta, confiante e focada em resultados reais de vendas (fechar negócios, resgatar contatos e gerenciar tarefas de forma impecável).
 O cérebro do Merlin é a IA, seus dados são o CRM, seus olhos são o Rules Engine e o chat é a sua forma de se comunicar.
 
-Aqui estão os dados reais da carteira do corretor no CRM neste momento. Baseie suas respostas 100% nestes dados! Se o corretor pedir para preparar mensagens ou analisar clientes, cite apenas pessoas que realmente existam nesta lista:
+Aqui estão os dados reais da carteira do corretor no CRM neste momento. Baseie suas respostas 100% nestes dados! Se o corretor pedir para preparar mensagens, analisar clientes ou gerenciar tarefas, cite apenas pessoas e tarefas que realmente existam nesta lista:
 
 1. CLIENTES CADASTRADOS (Total: ${totalLeads}):
 ${JSON.stringify(clientsListBrief.slice(0, 40), null, 2)}
 
-2. ANÁLISE DO RULES ENGINE (OLHOS DO MERLIN):
+2. TAREFAS ATUAIS NA ROTINA DO CORRETOR:
+${JSON.stringify(activeTasksBrief, null, 2)}
+
+3. ANÁLISE DO RULES ENGINE (OLHOS DO MERLIN):
 - Clientes de Alta Prioridade: ${JSON.stringify(prioritiesBrief, null, 2)}
 - Alertas e Gargalos Gerais: ${JSON.stringify(alertsBrief, null, 2)}
 - Tarefas Agendadas para Hoje: ${JSON.stringify(todayTasksBrief, null, 2)}
 - Tarefas Atrasadas/Pendentes: ${JSON.stringify(overdueTasksBrief, null, 2)}
 
-3. DADOS DE VENDAS E PERFORMANCE:
+4. DADOS DE VENDAS E PERFORMANCE:
 - Quantidade de vendas fechadas: ${salesCount}
 - Comissão acumulada do corretor: R$ ${totalCommission.toLocaleString('pt-BR')}
 
-${brokerLearnedProfile ? `4. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEMÓRIA APRENDIDA):
+${brokerLearnedProfile ? `5. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEMÓRIA APRENDIDA):
 - Estilo de Comunicação Aprendido: ${brokerLearnedProfile.communicationStyle}
 - Forma de Abordagem Aprendida: ${brokerLearnedProfile.approachStyle}
 - Preferências de Atendimento: ${brokerLearnedProfile.preferences}
@@ -313,19 +347,60 @@ ${brokerLearnedProfile ? `4. PERFIL DE TRABALHO E COMUNICAÇÃO DO CORRETOR (MEM
 *Diretriz de Aprendizado*: Adapte todas as abordagens, scripts, sugestões de conversas e orientações aos pontos acima. Respeite o estilo e a forma de trabalho do corretor, aprimorando-a estrategicamente.
 ` : ''}
 
-${brokerMemory && brokerMemory.length > 0 ? `5. HISTÓRICO RECENTE DE INTERAÇÕES E MEMÓRIA DE USO DO CORRETOR:
+${brokerMemory && brokerMemory.length > 0 ? `6. HISTÓRICO RECENTE DE INTERAÇÕES E MEMÓRIA DE USO DO CORRETOR:
 ${JSON.stringify(brokerMemory.slice(0, 10), null, 2)}
 
-*Diretriz de Uso*: Use este histórico para entender quais mensagens foram geradas, quais foram copiadas e quais interações (como comentários e status) o corretor executou ultimamente. Dê retornos acionáveis que usem esse contexto!
+*Diretriz de Uso*: Use este histórico para entender quais mensagens foram geradas, quais foram copiadas e quais interações o corretor executou ultimamente.
 ` : ''}
 
 Diretrizes de resposta (Siga à risca!):
-- Cumprimente o usuário tratando-o carinhosamente como "corretor" (ou pelo nome dele caso o sistema envie um nome específico de usuário autenticado no futuro, mas atualmente utilize o termo "corretor"). Nunca utilize referências fixas ao nome "Wesley". Ex: "Olá, corretor! 👋" ou "Bom dia, corretor!".
-- Quando ele perguntar "quais clientes chamar hoje?", "o que fazer hoje?" ou "quais as prioridades?", faça uma síntese direta dos Clientes de Alta Prioridade e Tarefas Atrasadas. Cite os nomes deles e as ações recomendadas (ex: "João Silva - pendente de simulação há 5 dias"). Organize em formato de lista Markdown elegante.
-- Se ele solicitar scripts ou mensagens para um cliente (ex: "Crie uma mensagem para a Franciene"), procure o cliente pelo nome aproximado nos Clientes Cadastrados. Se achar, use o empreendimento dele e o histórico para formular uma mensagem de WhatsApp fantástica, amigável, humana, natural, com quebras de linha e gatilhos amigáveis (ex: "Oi Franciene, tudo bem? Vi aqui que..."). Retorne o texto pronto para ser copiado. Se não achar o cliente por esse nome exato, pergunte educadamente sobre qual cliente ele está se referindo ou peça mais detalhes.
-- Se ele pedir uma análise geral ou de performance da carteira, use os dados acima para destacar pontos fortes e os principais gargalos (ex: "Você tem X clientes sem retorno marcado. Vamos agendar para eles hoje?").
-- Use sempre um tom profissional de parceria, de um gerente ou mentor que quer ver o corretor bater a meta de comissão acumulada (atualmente de R$ ${totalCommission.toLocaleString('pt-BR')}).
-- Apresente tudo formatado de forma limpa, com subtítulos e bullet points, mas NUNCA mostre estruturas de código JSON na resposta final para o corretor.`;
+- Cumprimente o usuário tratando-o carinhosamente como "corretor".
+- Quando ele perguntar "quais clientes chamar hoje?", "o que fazer hoje?" ou "quais as prioridades?", faça uma síntese direta dos Clientes de Alta Prioridade e Tarefas Atrasadas. Cite os nomes deles e as ações recomendadas.
+- Se ele solicitar scripts ou mensagens para um cliente, formule mensagens naturais de WhatsApp prontas para envio.
+- GESTÃO DE TAREFAS (MERLIN SECOND BRAIN):
+  Se o corretor pedir explicitamente para:
+  1. CRIAR UMA TAREFA (ex: "Cria uma tarefa para amanhã às 8:30 para eu fazer 20 retrabalhos", "Me lembra de ligar para o João amanhã às 14h"):
+     Se faltar a descrição do que fazer, pergunte ao corretor o que deve ser feito e NÃO crie ação.
+     Se houver descrição clara, confirme amigavelmente e inclua no final da resposta o bloco:
+     \`\`\`merlin_action
+     {
+       "type": "create_task",
+       "task": {
+         "clientId": "id_do_cliente_se_houver",
+         "clientName": "nome_do_cliente_se_houver",
+         "actionType": "WhatsApp" | "Ligação" | "Visita ao Imóvel" | "Enviar Proposta" | "Reunião" | "Contrato / Docs" | "Outro",
+         "dueDate": "YYYY-MM-DD",
+         "dueTime": "HH:MM",
+         "priority": "Alta" | "Média" | "Baixa",
+         "notes": "Descrição da tarefa"
+       }
+     }
+     \`\`\`
+  2. REAGENDAR UMA TAREFA:
+     \`\`\`merlin_action
+     {
+       "type": "reschedule_task",
+       "taskId": "id_da_tarefa_existente",
+       "newDueDate": "YYYY-MM-DD",
+       "newDueTime": "HH:MM"
+     }
+     \`\`\`
+  3. CONCLUIR UMA TAREFA:
+     \`\`\`merlin_action
+     {
+       "type": "complete_task",
+       "taskId": "id_da_tarefa_existente"
+     }
+     \`\`\`
+  4. CANCELAR UMA TAREFA:
+     \`\`\`merlin_action
+     {
+       "type": "cancel_task",
+       "taskId": "id_da_tarefa_existente"
+     }
+     \`\`\`
+- REGRAS CRÍTICAS:
+  - NUNCA invente clientes, tarefas, datas ou horários que não foram informados.`;
 
         const userPrompt = `Histórico recente do chat:
 ${history ? history.map((h: any) => `${h.sender === "user" ? "Corretor" : "Merlin"}: ${h.text}`).join("\n") : ""}
@@ -335,9 +410,10 @@ ${history ? history.map((h: any) => `${h.sender === "user" ? "Corretor" : "Merli
 
 Escreva sua resposta de forma direta, amigável e extremamente acionável:`;
 
-        const text = await generateWithFallbackAndTimeout(apiKey, userPrompt, systemPrompt, 0.75);
+        const rawText = await generateWithFallbackAndTimeout(apiKey, userPrompt, systemPrompt, 0.75);
+        const { cleanText, action } = extractActionFromText(rawText);
 
-        return new Response(JSON.stringify({ text }), {
+        return new Response(JSON.stringify({ text: cleanText, action }), {
           status: 200,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
