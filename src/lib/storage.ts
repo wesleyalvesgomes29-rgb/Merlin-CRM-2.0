@@ -1,5 +1,9 @@
 import { Client, Tag, Sale, ClientStatus, Task } from '../types';
 import { DEFAULT_TAGS, INITIAL_CLIENTS, INITIAL_SALES } from '../data/seed';
+import { generateMemoryId } from './idUtils';
+import { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL } from './dateUtils';
+
+export { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL };
 
 // LocalStorage Keys
 const KEYS = {
@@ -7,8 +11,201 @@ const KEYS = {
   TAGS: 'merlin_tags_v1',
   SALES: 'merlin_sales_v1',
   THEME: 'merlin_theme_v1',
-  TASKS: 'merlin_tasks_v1'
+  TASKS: 'merlin_tasks_v1',
+  LAST_SYNC: 'merlin_last_sync_timestamp'
 };
+
+// =========================================================================
+// SINCRONIZAÇÃO EM NUVEM (OFFLINE-FIRST + BACKGROUND CLOUD SYNC)
+// =========================================================================
+
+export type SyncStatusState = 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
+
+let currentSyncStatus: SyncStatusState = 'idle';
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let isSyncing = false;
+
+export function getSyncStatus(): SyncStatusState {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return 'offline';
+  }
+  return currentSyncStatus;
+}
+
+function setSyncStatus(status: SyncStatusState) {
+  currentSyncStatus = status;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('merlin_sync_status_changed', { detail: { status } }));
+  }
+}
+
+/**
+ * Envia todos os dados locais do CRM para a API de Sincronização (/api/sync)
+ */
+export async function pushLocalDataToCloud(): Promise<boolean> {
+  if (typeof window === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+    setSyncStatus('offline');
+    return false;
+  }
+
+  if (isSyncing) return false;
+  isSyncing = true;
+  setSyncStatus('syncing');
+
+  try {
+    const clients = getStoredClients();
+    const tasks = getStoredTasks();
+    const sales = getStoredSales();
+    const tags = getStoredTags();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        clients,
+        tasks,
+        sales,
+        tags
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const result = await response.json();
+      localStorage.setItem(KEYS.LAST_SYNC, new Date().toISOString());
+      setSyncStatus('synced');
+      return true;
+    } else {
+      console.warn('[Merlin Sync] Servidor retornou erro na sincronização:', response.status);
+      setSyncStatus('error');
+      return false;
+    }
+  } catch (error: any) {
+    console.warn('[Merlin Sync] Erro ou timeout na sincronização em nuvem:', error?.message || error);
+    setSyncStatus('error');
+    return false;
+  } finally {
+    isSyncing = false;
+  }
+}
+
+/**
+ * Agenda um push para a nuvem em background com debounce
+ */
+export function scheduleBackgroundPush() {
+  if (typeof window === 'undefined') return;
+
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+  }
+
+  syncDebounceTimer = setTimeout(() => {
+    pushLocalDataToCloud().catch(err => {
+      console.warn('[Merlin Sync] Falha no push em background:', err);
+    });
+  }, 800);
+}
+
+/**
+ * Consulta a nuvem e mescla os dados se o banco remoto possuir registros atualizados
+ */
+export async function fetchCloudData(): Promise<boolean> {
+  if (typeof window === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+    return false;
+  }
+
+  try {
+    setSyncStatus('syncing');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch('/api/sync', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      setSyncStatus('error');
+      return false;
+    }
+
+    const payload = await response.json();
+    if (!payload || !payload.success || !payload.data) {
+      setSyncStatus('idle');
+      return false;
+    }
+
+    const { clients, tasks, sales, tags } = payload.data;
+    const localClients = getStoredClients();
+
+    // Se o banco remoto tiver clientes
+    if (Array.isArray(clients) && clients.length > 0) {
+      // Atualiza o cache local
+      localStorage.setItem(KEYS.CLIENTS, JSON.stringify(clients));
+      if (Array.isArray(tasks)) localStorage.setItem(KEYS.TASKS, JSON.stringify(tasks));
+      if (Array.isArray(sales)) localStorage.setItem(KEYS.SALES, JSON.stringify(sales));
+      if (Array.isArray(tags)) localStorage.setItem(KEYS.TAGS, JSON.stringify(tags));
+      localStorage.setItem(KEYS.LAST_SYNC, new Date().toISOString());
+
+      // Notifica o React para atualizar estado sem reload de página
+      window.dispatchEvent(new CustomEvent('merlin_data_synced', {
+        detail: { clients, tasks, sales, tags }
+      }));
+
+      setSyncStatus('synced');
+      return true;
+    } else if (localClients.length > 0) {
+      // Se a nuvem estiver vazia mas o local tem clientes, envia para a nuvem
+      await pushLocalDataToCloud();
+      return true;
+    }
+
+    setSyncStatus('synced');
+    return true;
+  } catch (error) {
+    console.warn('[Merlin Sync] Erro no fetch de sincronização:', error);
+    setSyncStatus('error');
+    return false;
+  }
+}
+
+/**
+ * Inicialização do listener de background sync ao carregar a aplicação
+ */
+export function initBackgroundSync() {
+  if (typeof window === 'undefined') return;
+
+  // Realiza a primeira sincronização após 1.5s do carregamento inicial
+  setTimeout(() => {
+    fetchCloudData().catch(() => {});
+  }, 1500);
+
+  // Escuta quando a rede voltar online
+  window.addEventListener('online', () => {
+    setSyncStatus('syncing');
+    fetchCloudData().then(() => pushLocalDataToCloud());
+  });
+
+  window.addEventListener('offline', () => {
+    setSyncStatus('offline');
+  });
+}
+
+// =========================================================================
+// MÉTODOS DE ARMAZENAMENTO LOCAL (OFFLINE-FIRST)
+// =========================================================================
 
 export function getStoredClients(): Client[] {
   if (typeof window === 'undefined') return INITIAL_CLIENTS;
@@ -27,6 +224,7 @@ export function getStoredClients(): Client[] {
 export function saveStoredClients(clients: Client[]) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(KEYS.CLIENTS, JSON.stringify(clients));
+    scheduleBackgroundPush();
   }
 }
 
@@ -47,6 +245,7 @@ export function getStoredTags(): Tag[] {
 export function saveStoredTags(tags: Tag[]) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(KEYS.TAGS, JSON.stringify(tags));
+    scheduleBackgroundPush();
   }
 }
 
@@ -67,6 +266,7 @@ export function getStoredSales(): Sale[] {
 export function saveStoredSales(sales: Sale[]) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(KEYS.SALES, JSON.stringify(sales));
+    scheduleBackgroundPush();
   }
 }
 
@@ -87,12 +287,13 @@ export function saveStoredTheme(theme: 'light' | 'dark') {
 
 // Helper date functions
 export function getDaysSinceContact(client: Client): number {
-  const referenceDate = new Date(); // Current local time
+  const now = new Date();
   const contactStr = client.lastContactDate || client.createdAt;
-  const contactDate = new Date(contactStr);
+  const contactDate = parseDateSafe(contactStr);
+  if (!contactDate) return 0;
   
-  const diffTime = Math.abs(referenceDate.getTime() - contactDate.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const diffTime = Math.abs(now.getTime() - contactDate.getTime());
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   return diffDays;
 }
 
@@ -110,9 +311,11 @@ export function getClientAlerts(client: Client): ClientAlerts {
   
   let isAtrasado = false;
   if (client.nextContactDate) {
-    const nextDate = new Date(client.nextContactDate);
-    // If nextDate is less than now (and not on the exact same minute/hour range or is strictly in the past day)
-    isAtrasado = nextDate.getTime() < now.getTime() && !isSameDay(nextDate, now);
+    const nextDate = parseDateSafe(client.nextContactDate);
+    if (nextDate) {
+      // If nextDate is strictly in the past and not today
+      isAtrasado = nextDate.getTime() < now.getTime() && !isSameDay(nextDate, now);
+    }
   }
 
   return {
@@ -121,29 +324,6 @@ export function getClientAlerts(client: Client): ClientAlerts {
     isSemRetorno: !client.nextContactDate && client.status !== 'Venda Fechada' && client.status !== 'Perdido',
     isAtrasado: isAtrasado && client.status !== 'Venda Fechada' && client.status !== 'Perdido'
   };
-}
-
-export function isSameDay(d1: Date, d2: Date): boolean {
-  return (
-    d1.getFullYear() === d2.getFullYear() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getDate() === d2.getDate()
-  );
-}
-
-export function isToday(dateStr: string | null): boolean {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const now = new Date();
-  return isSameDay(d, now);
-}
-
-export function isTomorrow(dateStr: string | null): boolean {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  return isSameDay(d, tomorrow);
 }
 
 export function getStoredTasks(): Task[] {
@@ -162,6 +342,7 @@ export function getStoredTasks(): Task[] {
 export function saveStoredTasks(tasks: Task[]) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(KEYS.TASKS, JSON.stringify(tasks));
+    scheduleBackgroundPush();
   }
 }
 
@@ -260,7 +441,7 @@ export function addBrokerMemoryEntry(
 ) {
   const entries = getBrokerMemory();
   const newEntry: BrokerMemoryEntry = {
-    id: 'mem_' + Math.random().toString(36).substr(2, 9),
+    id: generateMemoryId(),
     type,
     clientId,
     clientName,

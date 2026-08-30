@@ -13,8 +13,21 @@ import {
   isToday,
   getStoredTasks,
   saveStoredTasks,
-  addBrokerMemoryEntry
+  addBrokerMemoryEntry,
+  getLocalTodayStr,
+  formatDateBRL,
+  initBackgroundSync,
+  getSyncStatus,
+  fetchCloudData,
+  SyncStatusState
 } from './lib/storage';
+import { 
+  generateClientId, 
+  generateHistoryId, 
+  generateTaskId, 
+  generateSaleId, 
+  generateTagId 
+} from './lib/idUtils';
 import { MerlinRulesEngine } from './modules/rulesEngine/engine';
 import { 
   Sparkles, 
@@ -98,7 +111,9 @@ export default function App() {
   const [isAddingClient, setIsAddingClient] = useState(false);
   const [initialStatusForAdd, setInitialStatusForAdd] = useState<ClientStatus>('Lead Novo');
 
-  // Initialize data on component mount
+  const [syncStatus, setSyncStatus] = useState<SyncStatusState>(getSyncStatus());
+
+  // Initialize data on component mount & start background cloud sync
   useEffect(() => {
     const loadedClients = getStoredClients();
     const loadedTags = getStoredTags();
@@ -118,6 +133,34 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+
+    // Start background Cloud persistence synchronization
+    initBackgroundSync();
+
+    // Listen for data updates arriving from Cloud Sync
+    const handleDataSynced = (event: any) => {
+      const detail = event?.detail;
+      if (detail) {
+        if (Array.isArray(detail.clients)) setClients(detail.clients);
+        if (Array.isArray(detail.tasks)) setTasks(detail.tasks);
+        if (Array.isArray(detail.sales)) setSales(detail.sales);
+        if (Array.isArray(detail.tags)) setTags(detail.tags);
+      }
+    };
+
+    const handleSyncStatusChange = (event: any) => {
+      if (event?.detail?.status) {
+        setSyncStatus(event.detail.status);
+      }
+    };
+
+    window.addEventListener('merlin_data_synced', handleDataSynced);
+    window.addEventListener('merlin_sync_status_changed', handleSyncStatusChange);
+
+    return () => {
+      window.removeEventListener('merlin_data_synced', handleDataSynced);
+      window.removeEventListener('merlin_sync_status_changed', handleSyncStatusChange);
+    };
   }, []);
 
   // Theme Toggle Handler
@@ -144,7 +187,7 @@ export default function App() {
     origem?: string;
   }) => {
     const newClient: Client = {
-      id: 'c_' + Math.random().toString(36).substr(2, 9),
+      id: generateClientId(),
       name: clientData.name,
       phone: clientData.phone,
       createdAt: new Date().toISOString(),
@@ -159,7 +202,7 @@ export default function App() {
       origem: clientData.origem,
       history: [
         {
-          id: 'h_init_' + Math.random().toString(),
+          id: generateHistoryId('h_init'),
           date: new Date().toISOString(),
           action: `Cliente cadastrado na etapa "${clientData.status}"`
         }
@@ -216,7 +259,7 @@ export default function App() {
       status: newStatus,
       history: [
         {
-          id: 'h_status_' + Math.random().toString(),
+          id: generateHistoryId('h_status'),
           date: new Date().toISOString(),
           action: `Etapa do funil alterada de "${oldStatus}" para "${newStatus}"`
         },
@@ -238,7 +281,7 @@ export default function App() {
       lastContactDate: new Date().toISOString(),
       history: [
         {
-          id: 'h_contact_' + Math.random().toString(),
+          id: generateHistoryId('h_contact'),
           date: new Date().toISOString(),
           action: `Contato rápido registrado por telefone/whats (Total de toques: ${newCount})`
         },
@@ -253,14 +296,16 @@ export default function App() {
     const target = clients.find(c => c.id === clientId);
     if (!target) return;
 
+    const formattedDate = formatDateBRL(dateStr, dateStr.includes('T') || dateStr.includes(':'));
+
     const updatedClient: Client = {
       ...target,
       nextContactDate: dateStr,
       history: [
         {
-          id: 'h_resched_' + Math.random().toString(),
+          id: generateHistoryId('h_resched'),
           date: new Date().toISOString(),
-          action: `Reagendamento rápido realizado para o dia ${new Date(dateStr).toLocaleString('pt-BR')}`
+          action: `Reagendamento rápido realizado para o dia ${formattedDate}`
         },
         ...target.history
       ]
@@ -280,7 +325,7 @@ export default function App() {
     notes: string;
   }[]) => {
     const newClients: Client[] = importedList.map(item => ({
-      id: 'c_' + Math.random().toString(36).substr(2, 9),
+      id: generateClientId(),
       name: item.name,
       phone: item.phone,
       createdAt: new Date().toISOString(),
@@ -295,7 +340,7 @@ export default function App() {
       origem: item.origem,
       history: [
         {
-          id: 'h_init_' + Math.random().toString(),
+          id: generateHistoryId('h_init'),
           date: new Date().toISOString(),
           action: `Cliente importado via planilha Excel na etapa "${item.status}"`
         }
@@ -311,7 +356,7 @@ export default function App() {
   // TAG CREATION HANDLER
   const handleCreateTag = (name: string, color: string) => {
     const newTag: Tag = {
-      id: 'tag_' + Math.random().toString(36).substr(2, 9),
+      id: generateTagId(),
       name,
       color
     };
@@ -323,7 +368,7 @@ export default function App() {
   // SALE CRUD HANDLERS
   const handleAddSale = (saleData: Omit<Sale, 'id'>) => {
     const newSale: Sale = {
-      id: 'sale_' + Math.random().toString(36).substr(2, 9),
+      id: generateSaleId(),
       ...saleData
     };
 
@@ -347,7 +392,7 @@ export default function App() {
   // TASK CRUD HANDLERS
   const handleAddTask = (taskData: Omit<Task, 'id' | 'createdAt'>) => {
     const newTask: Task = {
-      id: 'task_' + Math.random().toString(36).substr(2, 9),
+      id: generateTaskId(),
       createdAt: new Date().toISOString(),
       ...taskData
     };
@@ -376,7 +421,7 @@ export default function App() {
               ...c,
               history: [
                 {
-                  id: Math.random().toString(),
+                  id: generateHistoryId('h_task'),
                   date: new Date().toISOString(),
                   action: `Tarefa concluída: "${task.actionType}"`
                 },
@@ -411,13 +456,7 @@ export default function App() {
     return (isToday(c.nextContactDate) || alerts.isAtrasado) && c.status !== 'Venda Fechada' && c.status !== 'Perdido';
   }).length;
 
-  const todayStr = (() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  })();
+  const todayStr = useMemo(() => getLocalTodayStr(), []);
 
   const pendingTasksCount = tasks.filter(t => !t.completed && t.dueDate <= todayStr).length;
 
@@ -597,8 +636,9 @@ export default function App() {
         <div className="space-y-3 pt-3 border-t border-[#303030]">
           <UserMenu />
           
-          <div className="text-[10px] text-[#888888] text-center font-medium">
-            Merlin CRM v2.0 &bull; IA Ativa
+          <div className="flex items-center justify-center gap-1.5 text-[10px] text-[#888888] font-medium">
+            <span className={`h-1.5 w-1.5 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : syncStatus === 'syncing' ? 'bg-amber-400 animate-pulse' : syncStatus === 'offline' ? 'bg-zinc-500' : 'bg-[#FF7A00]'}`} />
+            <span>{syncStatus === 'syncing' ? 'Sincronizando nuvem...' : syncStatus === 'offline' ? 'Modo Local (Offline)' : 'Nuvem Conectada'}</span>
           </div>
         </div>
       </aside>

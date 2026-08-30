@@ -1,5 +1,6 @@
 import { ClientDocument, DocumentStatus, REQUIRED_DOCUMENTS } from './types';
 import { getStoredDocuments, saveStoredDocuments } from './storage';
+import { generateDocumentId } from '../../lib/idUtils';
 
 export const documentService = {
   /**
@@ -43,7 +44,7 @@ export const documentService = {
       }
     } else {
       allDocs.push({
-        id: Math.random().toString(),
+        id: generateDocumentId(),
         clientId,
         documentType,
         status
@@ -68,7 +69,7 @@ export const documentService = {
     const existingIndex = allDocs.findIndex(d => d.clientId === clientId && d.documentType === documentType);
     
     const newDoc: ClientDocument = {
-      id: existingIndex > -1 ? allDocs[existingIndex].id : Math.random().toString(),
+      id: existingIndex > -1 ? allDocs[existingIndex].id : generateDocumentId(),
       clientId,
       documentType,
       status: 'Recebido',

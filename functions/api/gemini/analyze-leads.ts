@@ -1,20 +1,15 @@
-import { generateWithFallbackAndTimeout } from "./_utils";
+import { generateWithFallbackAndTimeout, getCorsHeaders } from "./_utils";
 
 interface Env {
   GEMINI_API_KEY?: string;
 }
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
 
 export async function onRequest(context: {
   request: Request;
   env: Env;
 }) {
   const { request, env } = context;
+  const corsHeaders = getCorsHeaders(request);
 
   // Handle preflight OPTIONS
   if (request.method === "OPTIONS") {
@@ -100,3 +95,4 @@ Seja direto, motivador e focado em resultados rápidos. Retorne a resposta em fo
     );
   }
 }
+

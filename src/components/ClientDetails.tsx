@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Client, Tag, ClientStatus, CommentEntry, Task } from '../types';
-import { getClientAlerts, getDaysSinceContact, getStoredTasks, saveStoredTasks } from '../lib/storage';
+import { getClientAlerts, getDaysSinceContact, getStoredTasks, saveStoredTasks, getLocalTodayStr, formatDateBRL } from '../lib/storage';
+import { generateTaskId, generateHistoryId } from '../lib/idUtils';
 import { 
   X, 
   Phone, 
@@ -67,13 +68,7 @@ export default function ClientDetails({
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [taskActionType, setTaskActionType] = useState('WhatsApp');
   const [taskPriority, setTaskPriority] = useState<'Alta' | 'Média' | 'Baixa'>('Média');
-  const [taskDueDate, setTaskDueDate] = useState(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
+  const [taskDueDate, setTaskDueDate] = useState(() => getLocalTodayStr());
   const [taskDueTime, setTaskDueTime] = useState('');
   const [taskNotes, setTaskNotes] = useState('');
 
@@ -122,7 +117,7 @@ export default function ClientDetails({
     } else {
       const allTasks = getStoredTasks();
       const newTask: Task = {
-        id: 'task_' + Math.random().toString(36).substr(2, 9),
+        id: generateTaskId(),
         createdAt: new Date().toISOString(),
         ...taskData
       };
@@ -152,7 +147,7 @@ export default function ClientDetails({
       tags: updated,
       history: [
         {
-          id: Math.random().toString(),
+          id: generateHistoryId('h_tag'),
           date: new Date().toISOString(),
           action: `Etiquetas atualizadas: ${updated.join(', ') || 'Nenhuma'}`
         },
@@ -172,7 +167,7 @@ export default function ClientDetails({
       lastContactDate: new Date().toISOString(),
       history: [
         {
-          id: Math.random().toString(),
+          id: generateHistoryId('h_contact'),
           date: new Date().toISOString(),
           action: `Contato registrado (Total de toques: ${newVal})`
         },
@@ -192,7 +187,7 @@ export default function ClientDetails({
       contactCount: newVal,
       history: [
         {
-          id: Math.random().toString(),
+          id: generateHistoryId('h_contact_adjust'),
           date: new Date().toISOString(),
           action: `Ajuste manual de toques: ${newVal}`
         },
@@ -211,7 +206,7 @@ export default function ClientDetails({
       status: newStatus,
       history: [
         {
-          id: Math.random().toString(),
+          id: generateHistoryId('h_status'),
           date: new Date().toISOString(),
           action: `Etapa alterada de "${status}" para "${newStatus}"`
         },
@@ -225,7 +220,7 @@ export default function ClientDetails({
     const newHistory = [];
     if (status !== client.status) {
       newHistory.push({
-        id: Math.random().toString(),
+        id: generateHistoryId('h_status'),
         date: new Date().toISOString(),
         action: `Etapa alterada de "${client.status}" para "${status}"`
       });
@@ -253,7 +248,7 @@ export default function ClientDetails({
     if (!newComment.trim()) return;
 
     const newCommentObj: CommentEntry = {
-      id: Math.random().toString(),
+      id: generateHistoryId('comm'),
       date: new Date().toISOString(),
       text: newComment.trim()
     };
@@ -264,7 +259,7 @@ export default function ClientDetails({
       lastContactDate: new Date().toISOString(),
       history: [
         {
-          id: Math.random().toString(),
+          id: generateHistoryId('h_comm'),
           date: new Date().toISOString(),
           action: `Nova anotação registrada no histórico`
         },

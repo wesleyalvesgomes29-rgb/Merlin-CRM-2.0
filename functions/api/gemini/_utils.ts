@@ -1,10 +1,45 @@
+export function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  const host = request.headers.get("Host");
+
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+
+  if (!origin) {
+    return headers;
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const hostname = originUrl.hostname.toLowerCase();
+
+    // Validação de origens seguras: localhost, domínios Cloudflare Pages (*.pages.dev), Cloud Run (*.run.app) ou mesmo host
+    const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+    const isCloudflarePages = hostname.endsWith(".pages.dev");
+    const isCloudRun = hostname.endsWith(".run.app");
+    const isSameHost = host ? (originUrl.host === host || hostname === host.split(":")[0]) : false;
+
+    if (isLocalhost || isCloudflarePages || isCloudRun || isSameHost) {
+      headers["Access-Control-Allow-Origin"] = origin;
+    }
+  } catch {
+    // Origem com formato inválido - não adiciona cabeçalho permissivo
+  }
+
+  return headers;
+}
+
 export async function generateWithFallbackAndTimeout(
   apiKey: string,
   userPrompt: string,
   systemPrompt: string,
   temperature: number
 ): Promise<string> {
-  const models = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+  const models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
   let lastError: any = null;
 
   for (const model of models) {
@@ -48,9 +83,10 @@ export async function generateWithFallbackAndTimeout(
 
       const data = await response.json() as any;
       
-      if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (typeof text === "string" && text.trim().length > 0) {
         console.log(`[Cloudflare Pages] Conteúdo gerado com sucesso pelo modelo: ${model}`);
-        return data.candidates[0].content.parts[0].text;
+        return text.trim();
       }
       
       if (data.error) {
@@ -69,3 +105,4 @@ export async function generateWithFallbackAndTimeout(
 
   throw lastError || new Error("Falha ao gerar conteúdo com todos os modelos disponíveis.");
 }
+

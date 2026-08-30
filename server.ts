@@ -3,13 +3,47 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import { initLocalDatabase, getAllData, syncAllData } from "./server/db";
 
 dotenv.config();
+
+// Inicializa banco de dados relacional local estruturado
+initLocalDatabase();
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// ==========================================
+// MERLIN CRM - ROTAS DE SINCRONIZAÇÃO E PERSISTÊNCIA
+// ==========================================
+
+// GET /api/sync: Retorna todos os dados agrupados do CRM
+app.get("/api/sync", (req, res) => {
+  try {
+    const data = getAllData();
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error: any) {
+    console.error("[Merlin Server] Erro no GET /api/sync:", error);
+    res.status(500).json({ success: false, error: error.message || "Erro ao consultar dados sincronizados." });
+  }
+});
+
+// POST /api/sync: Recebe o payload e persiste os dados com segurança
+app.post("/api/sync", (req, res) => {
+  try {
+    const { clients, tasks, sales, tags } = req.body || {};
+    const result = syncAllData({ clients, tasks, sales, tags });
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Merlin Server] Erro no POST /api/sync:", error);
+    res.status(500).json({ success: false, error: error.message || "Erro ao persistir dados." });
+  }
+});
 
 // Lazy-initialized GoogleGenAI instance
 let aiInstance: GoogleGenAI | null = null;
