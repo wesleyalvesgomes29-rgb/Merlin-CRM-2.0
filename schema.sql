@@ -1,9 +1,33 @@
 -- Merlin CRM - Schema Relacional SQLite / Cloudflare D1
--- Tabelas estruturadas para clientes, histórico, anotações, tarefas, vendas e etiquetas
+-- Tabelas estruturadas para usuários, convites, clientes, histórico, tarefas, vendas e etiquetas
 
--- 1. Tabela de Clientes
+-- 1. Tabela de Usuários
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  role TEXT DEFAULT 'broker', -- 'admin' ou 'broker'
+  created_at TEXT NOT NULL
+);
+
+-- 2. Tabela de Códigos de Convite Secreto
+CREATE TABLE IF NOT EXISTS invite_codes (
+  code TEXT PRIMARY KEY,
+  created_by TEXT,
+  used_by TEXT,
+  used_at TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (used_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- 3. Tabela de Clientes (com user_id para isolamento)
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,
+  user_id TEXT,
   name TEXT NOT NULL,
   phone TEXT,
   email TEXT,
@@ -16,10 +40,11 @@ CREATE TABLE IF NOT EXISTS clients (
   contact_count INTEGER NOT NULL DEFAULT 0,
   last_contact_date TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT
+  updated_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 2. Tabela de Comentários / Anotações do Cliente
+-- 4. Tabela de Comentários / Anotações do Cliente
 CREATE TABLE IF NOT EXISTS client_comments (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL,
@@ -28,7 +53,7 @@ CREATE TABLE IF NOT EXISTS client_comments (
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
 
--- 3. Tabela de Histórico de Ações do Cliente
+-- 5. Tabela de Histórico de Ações do Cliente
 CREATE TABLE IF NOT EXISTS client_history (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL,
@@ -37,9 +62,10 @@ CREATE TABLE IF NOT EXISTS client_history (
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
 
--- 4. Tabela de Tarefas e Rotina (Merlin Second Brain)
+-- 6. Tabela de Tarefas e Rotina (com user_id para isolamento)
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
+  user_id TEXT,
   client_id TEXT,
   client_name TEXT,
   action_type TEXT NOT NULL,
@@ -49,12 +75,14 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
 );
 
--- 5. Tabela de Vendas e Comissões
+-- 7. Tabela de Vendas e Comissões (com user_id para isolamento)
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY,
+  user_id TEXT,
   client_id TEXT,
   client_name TEXT NOT NULL,
   property_name TEXT,
@@ -64,10 +92,11 @@ CREATE TABLE IF NOT EXISTS sales (
   commission_value REAL NOT NULL DEFAULT 0,
   payment_status TEXT DEFAULT 'Recebido',
   notes TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
 );
 
--- 6. Tabela de Tags / Etiquetas do CRM
+-- 8. Tabela de Tags / Etiquetas do CRM
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
@@ -75,10 +104,16 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 -- Índices para Otimização de Consultas Rápidas
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_invite_codes_active ON invite_codes(is_active);
+CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
 CREATE INDEX IF NOT EXISTS idx_clients_next_contact ON clients(next_contact_date);
 CREATE INDEX IF NOT EXISTS idx_comments_client_id ON client_comments(client_id);
 CREATE INDEX IF NOT EXISTS idx_history_client_id ON client_history(client_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_client_id ON tasks(client_id);
+CREATE INDEX IF NOT EXISTS idx_sales_user_id ON sales(user_id);
 CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
+

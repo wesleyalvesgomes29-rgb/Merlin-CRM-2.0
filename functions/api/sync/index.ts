@@ -29,7 +29,10 @@ export async function onRequest(context: {
   env: Env;
 }) {
   const { request, env } = context;
-  const corsHeaders = getCorsHeaders(request);
+  const corsHeaders = {
+    ...getCorsHeaders(request),
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-Id"
+  };
 
   // Handle preflight OPTIONS request
   if (request.method === "OPTIONS") {
@@ -44,6 +47,9 @@ export async function onRequest(context: {
   // ==========================================
   if (request.method === "GET") {
     try {
+      const url = new URL(request.url);
+      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+
       if (!env.DB) {
         // Se D1 não estiver vinculado nesta instância Cloudflare
         return new Response(
@@ -63,6 +69,19 @@ export async function onRequest(context: {
         );
       }
 
+      // Prepara queries filtrando por user_id se fornecido
+      const clientsQuery = userId
+        ? env.DB.prepare("SELECT * FROM clients WHERE user_id IS NULL OR user_id = ? OR user_id = 'default_broker' ORDER BY created_at DESC").bind(userId)
+        : env.DB.prepare("SELECT * FROM clients ORDER BY created_at DESC");
+
+      const tasksQuery = userId
+        ? env.DB.prepare("SELECT * FROM tasks WHERE user_id IS NULL OR user_id = ? OR user_id = 'default_broker' ORDER BY created_at DESC").bind(userId)
+        : env.DB.prepare("SELECT * FROM tasks ORDER BY created_at DESC");
+
+      const salesQuery = userId
+        ? env.DB.prepare("SELECT * FROM sales WHERE user_id IS NULL OR user_id = ? OR user_id = 'default_broker' ORDER BY sale_date DESC").bind(userId)
+        : env.DB.prepare("SELECT * FROM sales ORDER BY sale_date DESC");
+
       // Executa queries em paralelo no D1
       const [
         clientsResult,
@@ -72,11 +91,11 @@ export async function onRequest(context: {
         salesResult,
         tagsResult
       ] = await Promise.all([
-        env.DB.prepare("SELECT * FROM clients ORDER BY created_at DESC").all(),
+        clientsQuery.all(),
         env.DB.prepare("SELECT * FROM client_comments ORDER BY created_at DESC").all(),
         env.DB.prepare("SELECT * FROM client_history ORDER BY date DESC").all(),
-        env.DB.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all(),
-        env.DB.prepare("SELECT * FROM sales ORDER BY sale_date DESC").all(),
+        tasksQuery.all(),
+        salesQuery.all(),
         env.DB.prepare("SELECT * FROM tags").all()
       ]);
 
@@ -215,8 +234,10 @@ export async function onRequest(context: {
         );
       }
 
+      const userId = request.headers.get("X-User-Id");
       const body: any = await request.json();
-      const { clients, tasks, sales, tags } = body || {};
+      const { clients, tasks, sales, tags, userId: bodyUserId } = body || {};
+      const effectiveUserId = userId || bodyUserId || "default_broker";
       const now = new Date().toISOString();
       const statements: D1PreparedStatement[] = [];
 
@@ -241,9 +262,10 @@ export async function onRequest(context: {
           if (sale && sale.id && sale.clientName) {
             statements.push(
               env.DB.prepare(
-                `INSERT INTO sales (id, client_id, client_name, property_name, sale_date, vgv, commission_rate, commission_value, payment_status, notes)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO sales (id, user_id, client_id, client_name, property_name, sale_date, vgv, commission_rate, commission_value, payment_status, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET
+                   user_id = coalesce(excluded.user_id, sales.user_id),
                    client_id = excluded.client_id,
                    client_name = excluded.client_name,
                    property_name = excluded.property_name,
@@ -255,6 +277,7 @@ export async function onRequest(context: {
                    notes = excluded.notes`
               ).bind(
                 sale.id,
+                sale.userId || effectiveUserId,
                 sale.clientId || null,
                 sale.clientName,
                 sale.propertyName || null,
@@ -276,9 +299,10 @@ export async function onRequest(context: {
           if (task && task.id && task.actionType) {
             statements.push(
               env.DB.prepare(
-                `INSERT INTO tasks (id, client_id, client_name, action_type, due_date, due_time, priority, completed, notes, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO tasks (id, user_id, client_id, client_name, action_type, due_date, due_time, priority, completed, notes, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET
+                   user_id = coalesce(excluded.user_id, tasks.user_id),
                    client_id = excluded.client_id,
                    client_name = excluded.client_name,
                    action_type = excluded.action_type,
@@ -289,6 +313,7 @@ export async function onRequest(context: {
                    notes = excluded.notes`
               ).bind(
                 task.id,
+                task.userId || effectiveUserId,
                 task.clientId || null,
                 task.clientName || "",
                 task.actionType,
@@ -312,9 +337,10 @@ export async function onRequest(context: {
 
             statements.push(
               env.DB.prepare(
-                `INSERT INTO clients (id, name, phone, email, empreendimento, origem, status, notes, tags, next_contact_date, contact_count, last_contact_date, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO clients (id, user_id, name, phone, email, empreendimento, origem, status, notes, tags, next_contact_date, contact_count, last_contact_date, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET
+                   user_id = coalesce(excluded.user_id, clients.user_id),
                    name = excluded.name,
                    phone = excluded.phone,
                    email = excluded.email,
@@ -329,6 +355,7 @@ export async function onRequest(context: {
                    updated_at = excluded.updated_at`
               ).bind(
                 client.id,
+                client.userId || effectiveUserId,
                 client.name,
                 client.phone || "",
                 client.email || "",
@@ -378,7 +405,6 @@ export async function onRequest(context: {
 
       // Executa o batch no D1 se houver statements
       if (statements.length > 0) {
-        // D1 limita batches a 100 statements por chamada; particionamos com segurança
         const CHUNK_SIZE = 80;
         for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
           const chunk = statements.slice(i, i + CHUNK_SIZE);

@@ -1,9 +1,11 @@
 import { Client, Tag, Sale, ClientStatus, Task } from '../types';
 import { DEFAULT_TAGS, INITIAL_CLIENTS, INITIAL_SALES } from '../data/seed';
 import { generateMemoryId } from './idUtils';
-import { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL } from './dateUtils';
+import { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL, getGreeting, extractFirstName } from './dateUtils';
+import { authStorage } from '../modules/auth/storage/authStorage';
 
-export { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL };
+export { isSameDay, isToday, isTomorrow, parseDateSafe, getLocalTodayStr, formatDateBRL, getGreeting, extractFirstName };
+
 
 // LocalStorage Keys
 const KEYS = {
@@ -57,16 +59,23 @@ export async function pushLocalDataToCloud(): Promise<boolean> {
     const tasks = getStoredTasks();
     const sales = getStoredSales();
     const tags = getStoredTags();
+    const currentUser = authStorage.getStoredSession()?.user;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (currentUser?.id) {
+      headers['X-User-Id'] = currentUser.id;
+    }
+
     const response = await fetch('/api/sync', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify({
+        userId: currentUser?.id,
         clients,
         tasks,
         sales,
@@ -125,12 +134,20 @@ export async function fetchCloudData(): Promise<boolean> {
     setSyncStatus('syncing');
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const currentUser = authStorage.getStoredSession()?.user;
 
-    const response = await fetch('/api/sync', {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (currentUser?.id) {
+      headers['X-User-Id'] = currentUser.id;
+    }
+
+    const url = currentUser?.id ? `/api/sync?userId=${encodeURIComponent(currentUser.id)}` : '/api/sync';
+
+    const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       signal: controller.signal
     });
 

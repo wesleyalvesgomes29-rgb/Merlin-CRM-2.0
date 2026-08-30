@@ -104,3 +104,82 @@ export function formatDateBRL(
   const minutes = String(d.getMinutes()).padStart(2, '0');
   return `${day}/${month}/${year} às ${hours}:${minutes}`;
 }
+
+/**
+ * Extracts and cleans the broker's first name:
+ * - If full name like "Wesley Gomes" -> "Wesley"
+ * - If email or identifier like "wesleyalvesgomes29@gmail.com" or "Wesleyalvesgomes29" -> "Wesley"
+ * - Removes trailing digits/numbers, special characters, and splits concatenated Brazilian surnames or separators.
+ */
+export function extractFirstName(nameOrIdentifier?: string | null): string {
+  if (!nameOrIdentifier || !nameOrIdentifier.trim()) {
+    return '';
+  }
+
+  let raw = nameOrIdentifier.trim();
+
+  // If it's an email, extract username portion before @
+  if (raw.includes('@')) {
+    raw = raw.split('@')[0];
+  }
+
+  // Remove trailing digits and numbers (e.g. "Wesleyalvesgomes29" -> "Wesleyalvesgomes", "wesley123" -> "wesley")
+  raw = raw.replace(/\d+$/, '');
+
+  // If there are explicit separators like space, dot, underscore, dash, plus
+  const parts = raw.split(/[\s._\-+]+/);
+  let firstPart = parts[0] || '';
+
+  // If CamelCase / PascalCase like "WesleyAlves" -> take "Wesley"
+  const camelMatches = firstPart.match(/^[A-Z][a-z]+/);
+  if (camelMatches && camelMatches[0] && camelMatches[0].length >= 2) {
+    firstPart = camelMatches[0];
+  } else {
+    // If all lowercase/joined like "wesleyalvesgomes" or "Wesleyalvesgomes",
+    // check if it starts with a common name followed by standard Brazilian surnames
+    const surnameRegex = /(alves|silva|santos|oliveira|souza|sousa|pereira|lima|ferreira|costa|rodrigues|almeida|nascimento|gomes|martins|araujo|ribeiro|carvalho|melo|barbosa|rocha|dias|moreira|nunes|marques|machado|mendes|freitas|cardoso|ramos|goncalves|santana|teixeira)/i;
+    const matchIndex = firstPart.search(surnameRegex);
+    // Only split if the surname doesn't start at index 0 and length >= 3
+    if (matchIndex > 2) {
+      firstPart = firstPart.substring(0, matchIndex);
+    }
+  }
+
+  // Final cleanup of non-letters
+  firstPart = firstPart.replace(/[^a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]/g, '');
+
+  if (!firstPart) return '';
+
+  // Format first letter uppercase and rest lowercase (e.g. "WESLEY" -> "Wesley")
+  return firstPart.charAt(0).toUpperCase() + firstPart.slice(1).toLowerCase();
+}
+
+/**
+ * Generates an intelligent dynamic greeting based on the broker's local time.
+ * - 05:00 to 11:59: "Bom dia"
+ * - 12:00 to 17:59: "Boa tarde"
+ * - 18:00 to 04:59: "Boa noite"
+ * 
+ * Formats:
+ * - With name: "{Saudação}, {PrimeiroNome}" (e.g. "Boa noite, Wesley")
+ * - Fallback: "{Saudação}, Corretor"
+ */
+export function getGreeting(nameOrIdentifier?: string | null, referenceDate = new Date()): string {
+  const hour = referenceDate.getHours();
+  let greeting = 'Boa noite';
+
+  if (hour >= 5 && hour < 12) {
+    greeting = 'Bom dia';
+  } else if (hour >= 12 && hour < 18) {
+    greeting = 'Boa tarde';
+  } else {
+    greeting = 'Boa noite';
+  }
+
+  const firstName = extractFirstName(nameOrIdentifier);
+  if (firstName && firstName.toLowerCase() !== 'corretor') {
+    return `${greeting}, ${firstName}`;
+  }
+
+  return `${greeting}, Corretor`;
+}

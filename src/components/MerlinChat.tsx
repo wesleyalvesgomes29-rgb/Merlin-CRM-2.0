@@ -31,8 +31,10 @@ import {
   getBrokerLearnedProfile, 
   addBrokerMemoryEntry,
   BrokerMemoryEntry,
-  BrokerLearnedProfile 
+  BrokerLearnedProfile,
+  getGreeting
 } from '../lib/storage';
+import { useAuth } from '../modules/auth';
 
 export interface ChatMessage {
   id: string;
@@ -67,6 +69,7 @@ export default function MerlinChat({
   onDeleteTask,
   onUpdateTask
 }: MerlinChatProps) {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -101,8 +104,9 @@ export default function MerlinChat({
       const todayTasksCount = engineResult?.todayTasks?.length || 0;
       const overdueTasksCount = engineResult?.overdueTasks?.length || 0;
       const totalAlerts = (engineResult?.alerts?.length || 0);
+      const greeting = getGreeting(user?.name || user?.email);
 
-      let greetingText = `Olá, corretor! 👋 Eu sou o **Merlin**, seu Assistente Comercial Inteligente e Second Brain.\n\nAcabei de processar os dados da sua carteira de clientes usando o **Rules Engine** e identifiquei o seguinte status para hoje:\n`;
+      let greetingText = `${greeting}! 👋 Eu sou o **Merlin**, seu Assistente Comercial Inteligente e Second Brain.\n\nAcabei de processar os dados da sua carteira de clientes usando o **Rules Engine** e identifiquei o seguinte status para hoje:\n`;
 
       if (highPriorityCount > 0) {
         greetingText += `🔥 **${highPriorityCount}** cliente${highPriorityCount > 1 ? 's com alta prioridade' : ' com alta prioridade'} precisando de contato urgente.\n`;

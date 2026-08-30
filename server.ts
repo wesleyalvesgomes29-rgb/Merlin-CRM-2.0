@@ -3,7 +3,17 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import { initLocalDatabase, getAllData, syncAllData } from "./server/db";
+import { 
+  initLocalDatabase, 
+  getAllData, 
+  syncAllData, 
+  registerUser, 
+  loginUser, 
+  findUserById, 
+  createInviteCode, 
+  listInviteCodes, 
+  revokeInviteCode 
+} from "./server/db";
 
 dotenv.config();
 
@@ -16,13 +26,191 @@ const PORT = 3000;
 app.use(express.json());
 
 // ==========================================
-// MERLIN CRM - ROTAS DE SINCRONIZAÇÃO E PERSISTÊNCIA
+// MERLIN CRM - ROTAS DE AUTENTICAÇÃO E CONVITES
 // ==========================================
 
-// GET /api/sync: Retorna todos os dados agrupados do CRM
+// POST /api/auth/register: Cadastro restrito por código de convite
+app.post("/api/auth/register", (req, res) => {
+  try {
+    const { name, email, password, inviteCode } = req.body || {};
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "O nome completo é obrigatório." });
+    }
+
+    if (!email || !email.trim() || !email.includes("@")) {
+      return res.status(400).json({ error: "Informe um endereço de e-mail válido." });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres." });
+    }
+
+    if (!inviteCode || !inviteCode.trim()) {
+      return res.status(400).json({ error: "O Código de Convite é obrigatório para cadastro." });
+    }
+
+    const result = registerUser({
+      name,
+      email,
+      password,
+      inviteCode
+    });
+
+    if (!result.success) {
+      // Se o erro foi relacionado a código inválido/expirado, retorna 403 conforme especificação
+      if (result.error?.includes("convite")) {
+        return res.status(403).json({ error: "Código de convite inválido ou expirado" });
+      }
+      return res.status(400).json({ error: result.error || "Erro ao realizar cadastro." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Usuário cadastrado com sucesso!",
+      user: result.user
+    });
+  } catch (error: any) {
+    console.error("[Merlin Auth] Erro no registro:", error);
+    return res.status(500).json({ error: error.message || "Erro interno no servidor ao registrar usuário." });
+  }
+});
+
+// POST /api/auth/login: Autenticação por e-mail e senha
+app.post("/api/auth/login", (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
+    }
+
+    const result = loginUser(email, password);
+
+    if (!result.success || !result.user) {
+      return res.status(401).json({ error: result.error || "E-mail ou senha incorretos." });
+    }
+
+    return res.json({
+      success: true,
+      user: result.user
+    });
+  } catch (error: any) {
+    console.error("[Merlin Auth] Erro no login:", error);
+    return res.status(500).json({ error: error.message || "Erro interno no servidor ao realizar login." });
+  }
+});
+
+// GET /api/auth/me: Validação de sessão do usuário
+app.get("/api/auth/me", (req, res) => {
+  try {
+    const userId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    if (!userId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    const user = findUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "Usuário não encontrado." });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error: any) {
+    console.error("[Merlin Auth] Erro no /api/auth/me:", error);
+    return res.status(500).json({ error: "Erro ao consultar usuário." });
+  }
+});
+
+// POST /api/admin/create-invite: Geração de novos códigos de convite por Administradores
+app.post("/api/admin/create-invite", (req, res) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || req.body?.adminUserId;
+    const { customCode } = req.body || {};
+
+    if (!adminUserId) {
+      return res.status(401).json({ error: "Identificação de administrador necessária." });
+    }
+
+    const result = createInviteCode(adminUserId, customCode);
+
+    if (!result.success) {
+      return res.status(403).json({ error: result.error || "Ação não autorizada." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      invite: result.invite
+    });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao criar convite:", error);
+    return res.status(500).json({ error: error.message || "Erro ao criar código de convite." });
+  }
+});
+
+// GET /api/admin/invite-codes: Listagem de códigos de convite para Administradores
+app.get("/api/admin/invite-codes", (req, res) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    if (!adminUserId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    const user = findUserById(adminUserId);
+    if (!user || user.role !== "admin") {
+      return res.status(403).json({ error: "Acesso restrito a administradores." });
+    }
+
+    const invites = listInviteCodes();
+    return res.json({
+      success: true,
+      invites
+    });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao listar convites:", error);
+    return res.status(500).json({ error: "Erro ao listar códigos de convite." });
+  }
+});
+
+// POST /api/admin/revoke-invite: Desativação de código de convite não utilizado
+app.post("/api/admin/revoke-invite", (req, res) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || req.body?.adminUserId;
+    const { code } = req.body || {};
+
+    if (!adminUserId || !code) {
+      return res.status(400).json({ error: "Parâmetros insuficientes." });
+    }
+
+    const result = revokeInviteCode(adminUserId, code);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Erro ao revogar convite." });
+    }
+
+    return res.json({ success: true, message: "Código de convite revogado." });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao revogar convite:", error);
+    return res.status(500).json({ error: "Erro ao revogar código de convite." });
+  }
+});
+
+// ==========================================
+// MERLIN CRM - ROTAS DE SINCRONIZAÇÃO E PERSISTÊNCIA (COM ISOLAMENTO)
+// ==========================================
+
+// GET /api/sync: Retorna todos os dados agrupados do CRM para o usuário autenticado
 app.get("/api/sync", (req, res) => {
   try {
-    const data = getAllData();
+    const userId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    const data = getAllData(userId);
     res.json({
       success: true,
       data
@@ -33,17 +221,19 @@ app.get("/api/sync", (req, res) => {
   }
 });
 
-// POST /api/sync: Recebe o payload e persiste os dados com segurança
+// POST /api/sync: Recebe o payload e persiste os dados com segurança e isolamento
 app.post("/api/sync", (req, res) => {
   try {
+    const userId = (req.headers["x-user-id"] as string) || req.body?.userId;
     const { clients, tasks, sales, tags } = req.body || {};
-    const result = syncAllData({ clients, tasks, sales, tags });
+    const result = syncAllData({ clients, tasks, sales, tags }, userId);
     res.json(result);
   } catch (error: any) {
     console.error("[Merlin Server] Erro no POST /api/sync:", error);
     res.status(500).json({ success: false, error: error.message || "Erro ao persistir dados." });
   }
 });
+
 
 // Lazy-initialized GoogleGenAI instance
 let aiInstance: GoogleGenAI | null = null;

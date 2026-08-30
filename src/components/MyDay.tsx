@@ -1,6 +1,7 @@
 import React from 'react';
 import { Client, Tag, Sale, Task } from '../types';
-import { getClientAlerts, getDaysSinceContact, isToday } from '../lib/storage';
+import { getClientAlerts, getDaysSinceContact, isToday, getGreeting } from '../lib/storage';
+import { useAuth } from '../modules/auth';
 import { 
   Sparkles, 
   Flame, 
@@ -46,6 +47,9 @@ export default function MyDay({
   onNavigateToClientsWithFilter,
   onNavigateToTasksWithFilter
 }: MyDayProps) {
+  const { user } = useAuth();
+  const dynamicGreeting = getGreeting(user?.name || user?.email);
+
   // 1. CRM Data Summaries
   const todayClients = clients.filter(c => {
     return isToday(c.nextContactDate) && c.status !== 'Venda Fechada' && c.status !== 'Perdido';
@@ -107,8 +111,8 @@ export default function MyDay({
               <Sparkles className="h-3.5 w-3.5 text-[#FF7A00]" />
               <span>Cockpit Comercial &bull; Merlin CRM</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-white capitalize">
-              Bom dia, Corretor 👋
+            <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-white">
+              {dynamicGreeting} 👋
             </h1>
             <p className="text-xs sm:text-sm text-[#BDBDBD] font-medium">
               {currentDateFormatted} &bull; <span className="text-[#FF7A00] font-semibold">Painel tático de performance e rotina diária</span>
