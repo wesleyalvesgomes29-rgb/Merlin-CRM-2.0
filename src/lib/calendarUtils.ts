@@ -12,6 +12,7 @@ export interface GoogleCalendarTaskParams {
   dueDate: string; // YYYY-MM-DD
   dueTime?: string; // HH:mm
   location?: string;
+  clientId?: string;
   clientName?: string;
   clientPhone?: string;
   priority?: 'Alta' | 'Média' | 'Baixa';
@@ -93,6 +94,7 @@ export async function syncTaskToGoogleCalendar(task: GoogleCalendarTaskParams): 
         dueDate: task.dueDate,
         dueTime: task.dueTime,
         notes: task.notes,
+        clientId: task.clientId,
         clientName: task.clientName,
         clientPhone: task.clientPhone,
         priority: task.priority,

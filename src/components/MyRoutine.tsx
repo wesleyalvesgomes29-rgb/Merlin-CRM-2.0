@@ -275,17 +275,8 @@ export default function MyRoutine({
 
       onAddTask(taskData);
 
-      if (autoOpenCalendar) {
-        openGoogleCalendarEvent({
-          title: taskData.notes || `${taskData.actionType} - ${taskData.clientName || 'Cliente'}`,
-          notes: `Tarefa: ${taskData.notes}\nLead: ${taskData.clientName || 'N/A'}\nPrioridade: ${taskData.priority}`,
-          dueDate: taskData.dueDate,
-          dueTime: taskData.dueTime
-        });
-      }
-
       setSmartPrompt('');
-      setSmartPromptFeedback(`✅ Tarefa agendada com sucesso para ${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''} e sincronizada com o Google Agenda!`);
+      setSmartPromptFeedback(`✅ Tarefa agendada no Merlin e salva automaticamente no Google Agenda! (${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''})`);
       setTimeout(() => {
         setSmartPromptFeedback(null);
       }, 7000);
@@ -450,16 +441,6 @@ export default function MyRoutine({
       onUpdateClient({
         ...linkedClient,
         nextContactDate: nextDateTime
-      });
-    }
-
-    // Optionally open Google Calendar event template
-    if (syncGoogleCalendarOnCreate) {
-      openGoogleCalendarEvent({
-        title: notes || `${actionType} - ${linkedClient?.name || 'Cliente'}`,
-        notes: `Tarefa: ${notes || actionType}\nLead: ${linkedClient?.name || 'N/A'}\nPrioridade: ${priority}`,
-        dueDate,
-        dueTime: dueTime || undefined
       });
     }
 
@@ -1401,11 +1382,11 @@ export default function MyRoutine({
                       type="checkbox"
                       checked={syncGoogleCalendarOnCreate}
                       onChange={(e) => setSyncGoogleCalendarOnCreate(e.target.checked)}
-                      className="rounded border-slate-300 dark:border-[#2A2A2A] text-blue-500 focus:ring-blue-500"
+                      className="rounded border-slate-300 dark:border-[#2A2A2A] text-emerald-500 focus:ring-emerald-500"
                     />
-                    <span className="flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                    <span className="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
                       <CalendarPlus className="h-3.5 w-3.5" />
-                      <span>Sincronizar e abrir no Google Agenda (100% gratuito)</span>
+                      <span>Sincronizar automaticamente no Google Agenda (em segundo plano)</span>
                     </span>
                   </label>
                 </div>

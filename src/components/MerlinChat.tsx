@@ -206,15 +206,7 @@ export default function MerlinChat({
           window.dispatchEvent(new CustomEvent('merlin_create_task', { detail: taskData }));
           addBrokerMemoryEntry('task_created', `Merlin criou a tarefa "${taskData.notes}" para ${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''}`, taskData.clientId, taskData.clientName);
 
-          // Sincronização automática gratuita com o Google Agenda
-          openGoogleCalendarEvent({
-            title: taskData.notes || `${taskData.actionType} - ${taskData.clientName || 'Cliente'}`,
-            notes: `Tarefa: ${taskData.notes || taskData.actionType}\nLead: ${taskData.clientName || 'N/A'}\nPrioridade: ${taskData.priority}`,
-            dueDate: taskData.dueDate,
-            dueTime: taskData.dueTime
-          });
-
-          setCalendarToast('✅ Tarefa agendada no Merlin CRM e sincronizada com o Google Agenda!');
+          setCalendarToast('✅ Tarefa agendada no Merlin e salva automaticamente no Google Agenda!');
           setTimeout(() => {
             setCalendarToast(null);
           }, 6000);

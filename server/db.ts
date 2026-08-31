@@ -352,7 +352,7 @@ export async function registerUser(params: {
   };
 }
 
-export async function loginUser(email: string, password: string): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string }> {
+export async function loginUser(email: string, password: string): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; isGoogleConnected?: boolean; error?: string }> {
   const user = findUserByEmail(email);
   if (!user) {
     return { success: false, error: 'E-mail ou senha incorretos.' };
@@ -372,9 +372,9 @@ export async function loginUser(email: string, password: string): Promise<{ succ
       role: user.role,
       created_at: user.created_at,
       google_email: user.google_email,
-      google_connected_at: user.google_connected_at,
-      isGoogleConnected: !!(user.google_access_token || user.google_refresh_token)
-    }
+      google_connected_at: user.google_connected_at
+    },
+    isGoogleConnected: !!(user.google_access_token || user.google_refresh_token)
   };
 }
 

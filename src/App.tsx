@@ -404,12 +404,13 @@ export default function App() {
     setTasks(updated);
     saveStoredTasks(updated);
 
-    // Automatic background synchronization with Google Calendar
+    // Automatic background synchronization with Google Calendar (100% silenciosa sem abrir abas)
     syncTaskToGoogleCalendar({
       title: newTask.notes || `${newTask.actionType} - ${newTask.clientName || 'Cliente'}`,
       notes: newTask.notes,
       dueDate: newTask.dueDate,
       dueTime: newTask.dueTime,
+      clientId: newTask.clientId,
       clientName: newTask.clientName,
       priority: newTask.priority,
       userId: user?.id
@@ -417,7 +418,7 @@ export default function App() {
       if (res.success) {
         setCalendarToast({
           id: String(Date.now()),
-          message: 'Tarefa criada e sincronizada automaticamente no Google Agenda!',
+          message: '✅ Tarefa agendada no Merlin e salva automaticamente no Google Agenda!',
           type: 'success'
         });
         setTimeout(() => setCalendarToast(null), 5000);

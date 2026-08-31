@@ -128,14 +128,6 @@ export default function ClientDetails({
       setClientTasks(updated.filter(t => t.clientId === client.id));
     }
 
-    // Auto open Google Calendar
-    openGoogleCalendarEvent({
-      title: taskNotes || `${taskActionType} - ${client.name}`,
-      notes: `Tarefa: ${taskNotes || taskActionType}\nLead: ${client.name}\nPrioridade: ${taskPriority}\nTelefone: ${client.phone}`,
-      dueDate: taskDueDate,
-      dueTime: taskDueTime || undefined
-    });
-
     setIsAddingTask(false);
     setTaskNotes('');
   };
