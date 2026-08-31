@@ -19,6 +19,9 @@ import {
   saveClientSecondBrainSummary,
   getBrokerMemory,
   saveBrokerMemory,
+  getTasksGrouped,
+  completeTask,
+  rescheduleTask,
   readDatabase
 } from "./server/db";
 import { buildPlaybookSystemPrompt, getPlaybookFallbackOptions, PlaybookPillarId } from "./src/lib/salesPlaybook";
@@ -766,6 +769,112 @@ app.post("/api/calendar/create-event", async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// MERLIN CRM - ROTAS DE TAREFAS & MINHA ROTINA
+// ==========================================
+
+// GET /api/tasks/my-day: Retorna as tarefas agrupadas (overdue, today, upcoming, staleClients)
+app.get("/api/tasks/my-day", (req, res) => {
+  try {
+    const userId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    const data = getTasksGrouped(userId);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("[Merlin Tasks API] Erro ao buscar tarefas do dia:", error);
+    return res.status(500).json({ success: false, error: error.message || "Erro ao consultar tarefas." });
+  }
+});
+
+// Handler para conclusão de tarefas com atualização de histórico e sincronização Google Calendar
+const handleTaskCompleteEndpoint = async (req: express.Request, res: express.Response) => {
+  try {
+    const taskId = req.params.id;
+    const userId = (req.headers["x-user-id"] as string) || req.body?.userId;
+
+    if (!taskId) {
+      return res.status(400).json({ success: false, error: "ID da tarefa é obrigatório." });
+    }
+
+    const result = completeTask(taskId, userId);
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+
+    // Background sync to Google Calendar if googleCalendarEventId exists
+    const gEventId = result.googleCalendarEventId;
+    if (gEventId && !gEventId.startsWith("gcal_evt_")) {
+      try {
+        let token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+        if (userId) {
+          const userTokens = getUserGoogleTokens(userId);
+          if (!token && userTokens.accessToken) {
+            token = userTokens.accessToken;
+          }
+        }
+        if (token) {
+          await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${gEventId}`, {
+            method: "PATCH",
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              summary: `[CONCLUÍDO] ${result.task?.notes || result.task?.actionType || 'Tarefa'}`,
+              colorId: "10"
+            })
+          }).catch(gErr => console.warn("[Google Calendar Task Complete Sync] Warning:", gErr));
+        }
+      } catch (err) {
+        console.warn("[Google Calendar Sync Complete] Erro não bloqueante:", err);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: "Tarefa concluída com sucesso.",
+      task: result.task,
+      clientHistoryAdded: result.clientHistoryAdded
+    });
+  } catch (error: any) {
+    console.error("[Merlin Tasks API] Erro ao concluir tarefa:", error);
+    return res.status(500).json({ success: false, error: error.message || "Erro ao concluir tarefa." });
+  }
+};
+
+app.patch("/api/tasks/:id/complete", handleTaskCompleteEndpoint);
+app.post("/api/tasks/:id/complete", handleTaskCompleteEndpoint);
+
+// Handler para reagendamento rápido de tarefas
+const handleTaskRescheduleEndpoint = async (req: express.Request, res: express.Response) => {
+  try {
+    const taskId = req.params.id;
+    const { dueDate, dueTime } = req.body || {};
+    const userId = (req.headers["x-user-id"] as string) || req.body?.userId;
+
+    if (!taskId || !dueDate) {
+      return res.status(400).json({ success: false, error: "ID da tarefa e nova data (dueDate) são obrigatórios." });
+    }
+
+    const result = rescheduleTask(taskId, dueDate, dueTime, userId);
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+
+    return res.json({
+      success: true,
+      message: "Tarefa reagendada com sucesso.",
+      task: result.task
+    });
+  } catch (error: any) {
+    console.error("[Merlin Tasks API] Erro ao reagendar tarefa:", error);
+    return res.status(500).json({ success: false, error: error.message || "Erro ao reagendar tarefa." });
+  }
+};
+
+app.patch("/api/tasks/:id/reschedule", handleTaskRescheduleEndpoint);
+app.post("/api/tasks/:id/reschedule", handleTaskRescheduleEndpoint);
+
 
 // POST /api/admin/create-invite: Geração de novos códigos de convite por Administradores
 app.post("/api/admin/create-invite", (req, res) => {

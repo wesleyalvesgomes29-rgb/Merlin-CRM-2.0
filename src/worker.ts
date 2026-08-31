@@ -1030,6 +1030,217 @@ export default {
     }
 
     // ==========================================
+    // ROTAS DE TAREFAS & MINHA ROTINA
+    // ==========================================
+
+    // GET /api/tasks/my-day: Retorna tarefas agrupadas do usuário logado
+    if (path === "/api/tasks/my-day") {
+      if (request.method !== "GET") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      const todayDate = new Date();
+      const todayStr = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
+
+      if (!env.DB) {
+        return jsonResponse({
+          success: true,
+          todayStr,
+          stats: { totalPending: 0, overdueCount: 0, todayCount: 0, upcomingCount: 0, completedCount: 0, staleClientsCount: 0 },
+          overdue: [],
+          today: [],
+          upcoming: [],
+          completed: [],
+          staleClients: []
+        });
+      }
+
+      try {
+        let taskQuery = "SELECT t.*, c.name as clientName, c.phone as clientPhone, c.status as clientStatus, c.empreendimento as clientEmpreendimento FROM tasks t LEFT JOIN clients c ON t.client_id = c.id";
+        let taskParams: any[] = [];
+        if (userId) {
+          taskQuery += " WHERE t.user_id = ? OR t.user_id IS NULL OR t.user_id = 'default_broker'";
+          taskParams.push(userId);
+        }
+        taskQuery += " ORDER BY t.due_date ASC, t.due_time ASC";
+
+        const tasksResult = await env.DB.prepare(taskQuery).bind(...taskParams).all();
+        const allTasks = (tasksResult.results || []).map((t: any) => ({
+          id: t.id,
+          clientId: t.client_id,
+          clientName: t.clientName || t.client_name,
+          clientPhone: t.clientPhone || t.client_phone,
+          clientStatus: t.clientStatus || t.client_status,
+          clientEmpreendimento: t.clientEmpreendimento || t.client_empreendimento,
+          actionType: t.action_type || t.actionType || 'Outro',
+          dueDate: t.due_date || t.dueDate,
+          dueTime: t.due_time || t.dueTime,
+          priority: t.priority || 'Média',
+          notes: t.notes || '',
+          completed: Boolean(t.completed),
+          googleCalendarEventId: t.google_calendar_event_id || t.google_event_id,
+          createdAt: t.created_at
+        }));
+
+        const overdue: any[] = [];
+        const today: any[] = [];
+        const upcoming: any[] = [];
+        const completed: any[] = [];
+
+        for (const task of allTasks) {
+          if (task.completed) {
+            completed.push(task);
+            continue;
+          }
+          if (task.dueDate < todayStr) {
+            overdue.push(task);
+          } else if (task.dueDate === todayStr) {
+            today.push(task);
+          } else {
+            upcoming.push(task);
+          }
+        }
+
+        // Check for stale clients (> 15 days without contact)
+        let clientQuery = "SELECT id, name, phone, status, empreendimento, last_contact_date, created_at FROM clients WHERE status NOT IN ('Venda Fechada', 'Perdido')";
+        let clientParams: any[] = [];
+        if (userId) {
+          clientQuery += " AND (user_id = ? OR user_id IS NULL OR user_id = 'default_broker')";
+          clientParams.push(userId);
+        }
+        const clientsResult = await env.DB.prepare(clientQuery).bind(...clientParams).all();
+        const staleClients: any[] = [];
+        const nowMs = Date.now();
+
+        for (const c of clientsResult.results || []) {
+          const contactStr = c.last_contact_date || c.created_at;
+          if (contactStr) {
+            const contactMs = new Date(contactStr).getTime();
+            if (!isNaN(contactMs)) {
+              const diffDays = Math.floor((nowMs - contactMs) / (1000 * 60 * 60 * 24));
+              if (diffDays > 15) {
+                staleClients.push({
+                  id: c.id,
+                  name: c.name,
+                  phone: c.phone,
+                  status: c.status,
+                  empreendimento: c.empreendimento,
+                  daysWithoutContact: diffDays,
+                  lastContactDate: c.last_contact_date,
+                  createdAt: c.created_at
+                });
+              }
+            }
+          }
+        }
+
+        staleClients.sort((a, b) => b.daysWithoutContact - a.daysWithoutContact);
+
+        return jsonResponse({
+          success: true,
+          todayStr,
+          stats: {
+            totalPending: overdue.length + today.length + upcoming.length,
+            overdueCount: overdue.length,
+            todayCount: today.length,
+            upcomingCount: upcoming.length,
+            completedCount: completed.length,
+            staleClientsCount: staleClients.length
+          },
+          overdue,
+          today,
+          upcoming,
+          completed,
+          staleClients
+        });
+      } catch (err: any) {
+        console.error("[Worker Tasks API] Erro ao buscar my-day:", err);
+        return errorResponse(err.message || "Erro ao consultar tarefas.", 500);
+      }
+    }
+
+    // PATCH /api/tasks/:id/complete e POST /api/tasks/:id/complete
+    if (path.startsWith("/api/tasks/") && path.endsWith("/complete")) {
+      if (request.method !== "PATCH" && request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const taskId = path.split("/")[3];
+      if (!taskId) {
+        return errorResponse("ID da tarefa é obrigatório.", 400);
+      }
+
+      const userId = request.headers.get("X-User-Id");
+      const now = new Date().toISOString();
+
+      if (env.DB) {
+        try {
+          const task = await env.DB.prepare("SELECT * FROM tasks WHERE id = ?").bind(taskId).first();
+          if (!task) {
+            return errorResponse("Tarefa não encontrada.", 404);
+          }
+
+          await env.DB.prepare("UPDATE tasks SET completed = 1, updated_at = ? WHERE id = ?").bind(now, taskId).run();
+
+          if (task.client_id) {
+            const histId = `hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            const actionText = `Tarefa concluída: "${task.action_type || 'Ação'} - ${task.notes || 'Sem observações'}"`;
+            await env.DB.prepare("INSERT INTO client_history (id, client_id, action, date) VALUES (?, ?, ?, ?)").bind(histId, task.client_id, actionText, now).run().catch(() => {});
+          }
+
+          return jsonResponse({
+            success: true,
+            message: "Tarefa concluída com sucesso.",
+            taskId
+          });
+        } catch (err: any) {
+          console.error("[Worker Task Complete] Erro:", err);
+          return errorResponse(err.message || "Erro ao concluir tarefa.", 500);
+        }
+      }
+
+      return jsonResponse({ success: true, message: "Tarefa concluída com sucesso.", taskId });
+    }
+
+    // PATCH /api/tasks/:id/reschedule e POST /api/tasks/:id/reschedule
+    if (path.startsWith("/api/tasks/") && path.endsWith("/reschedule")) {
+      if (request.method !== "PATCH" && request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const taskId = path.split("/")[3];
+      if (!taskId) {
+        return errorResponse("ID da tarefa é obrigatório.", 400);
+      }
+
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        return errorResponse("Formato JSON inválido.", 400);
+      }
+
+      const { dueDate, dueTime } = body || {};
+      if (!dueDate) {
+        return errorResponse("dueDate é obrigatório.", 400);
+      }
+
+      const now = new Date().toISOString();
+
+      if (env.DB) {
+        try {
+          await env.DB.prepare("UPDATE tasks SET due_date = ?, due_time = ?, completed = 0, updated_at = ? WHERE id = ?").bind(dueDate, dueTime || null, now, taskId).run();
+          return jsonResponse({ success: true, message: "Tarefa reagendada com sucesso." });
+        } catch (err: any) {
+          return errorResponse(err.message || "Erro ao reagendar tarefa.", 500);
+        }
+      }
+
+      return jsonResponse({ success: true, message: "Tarefa reagendada com sucesso." });
+    }
+
+    // ==========================================
     // ROTAS DE ADMINISTRAÇÃO (CONVITES)
     // ==========================================
 

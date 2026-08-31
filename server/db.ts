@@ -778,3 +778,215 @@ export function saveBrokerMemory(userId: string, data: { communication_style?: s
   writeDatabase(db);
   return { success: true, memory: db.broker_memory[userId] };
 }
+
+// -------------------------------------------------------------
+// Agile Routine & Tasks Management Engine
+// -------------------------------------------------------------
+
+function getTodayIsoDate(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getTasksGrouped(userId?: string) {
+  const db = readDatabase();
+  const todayStr = getTodayIsoDate();
+
+  let rawTasks = Object.values(db.tasks || {});
+  let rawClients = Object.values(db.clients || {});
+
+  if (userId) {
+    rawTasks = rawTasks.filter((t: any) => !t.user_id || t.user_id === userId || t.user_id === 'default_broker');
+    rawClients = rawClients.filter((c: any) => !c.user_id || c.user_id === userId || c.user_id === 'default_broker');
+  }
+
+  // Enrich tasks with client information if missing
+  const enrichedTasks = rawTasks.map((t: any) => {
+    let clientName = t.clientName;
+    let clientPhone = t.clientPhone;
+    let clientStatus = t.clientStatus;
+    let clientEmpreendimento = t.clientEmpreendimento;
+
+    if (t.clientId && db.clients[t.clientId]) {
+      const c = db.clients[t.clientId];
+      clientName = clientName || c.name;
+      clientPhone = clientPhone || c.phone;
+      clientStatus = clientStatus || c.status;
+      clientEmpreendimento = clientEmpreendimento || c.empreendimento;
+    }
+
+    return {
+      ...t,
+      clientName,
+      clientPhone,
+      clientStatus,
+      clientEmpreendimento,
+      completed: Boolean(t.completed)
+    };
+  });
+
+  // Calculate 7 days ahead limit
+  const d7 = new Date();
+  d7.setDate(d7.getDate() + 7);
+  const next7DaysStr = `${d7.getFullYear()}-${String(d7.getMonth() + 1).padStart(2, '0')}-${String(d7.getDate()).padStart(2, '0')}`;
+
+  const overdue: any[] = [];
+  const today: any[] = [];
+  const upcoming: any[] = [];
+  const completed: any[] = [];
+
+  for (const task of enrichedTasks) {
+    if (task.completed) {
+      completed.push(task);
+      continue;
+    }
+
+    if (task.dueDate < todayStr) {
+      overdue.push(task);
+    } else if (task.dueDate === todayStr) {
+      today.push(task);
+    } else {
+      upcoming.push(task);
+    }
+  }
+
+  // Sort by date & time
+  const sortByDateTime = (a: any, b: any) => {
+    const compDate = (a.dueDate || '').localeCompare(b.dueDate || '');
+    if (compDate !== 0) return compDate;
+    return (a.dueTime || '99:99').localeCompare(b.dueTime || '99:99');
+  };
+
+  overdue.sort(sortByDateTime);
+  today.sort(sortByDateTime);
+  upcoming.sort(sortByDateTime);
+  completed.sort((a: any, b: any) => new Date(b.completedAt || b.dueDate).getTime() - new Date(a.completedAt || a.dueDate).getTime());
+
+  // Find stale critical leads (> 15 days without contact, active funil)
+  const now = new Date();
+  const staleClients: any[] = [];
+
+  for (const c of rawClients) {
+    if (c.status === 'Venda Fechada' || c.status === 'Perdido') continue;
+
+    const lastContactStr = c.lastContactDate || c.createdAt;
+    if (lastContactStr) {
+      const contactDate = new Date(lastContactStr);
+      if (!isNaN(contactDate.getTime())) {
+        const diffDays = Math.floor((now.getTime() - contactDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays > 15) {
+          staleClients.push({
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+            status: c.status,
+            empreendimento: c.empreendimento,
+            daysWithoutContact: diffDays,
+            lastContactDate: c.lastContactDate,
+            createdAt: c.createdAt
+          });
+        }
+      }
+    }
+  }
+
+  staleClients.sort((a, b) => b.daysWithoutContact - a.daysWithoutContact);
+
+  return {
+    success: true,
+    todayStr,
+    stats: {
+      totalPending: overdue.length + today.length + upcoming.length,
+      overdueCount: overdue.length,
+      todayCount: today.length,
+      upcomingCount: upcoming.length,
+      completedCount: completed.length,
+      staleClientsCount: staleClients.length
+    },
+    overdue,
+    today,
+    upcoming,
+    completed,
+    staleClients
+  };
+}
+
+export function completeTask(taskId: string, userId?: string) {
+  const db = readDatabase();
+  const task = db.tasks[taskId];
+
+  if (!task) {
+    return { success: false, error: 'Tarefa não encontrada.' };
+  }
+
+  const now = new Date().toISOString();
+  task.completed = true;
+  task.completedAt = now;
+  task.updatedAt = now;
+
+  let clientHistoryAdded = false;
+
+  // Add entry to client history if linked to a client
+  if (task.clientId && db.clients[task.clientId]) {
+    const client = db.clients[task.clientId];
+    const historyId = `hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    
+    if (!db.client_history) {
+      db.client_history = {};
+    }
+
+    db.client_history[historyId] = {
+      id: historyId,
+      clientId: client.id,
+      action: `Tarefa concluída: "${task.actionType} - ${task.notes || 'Sem observações'}"`,
+      date: now
+    };
+
+    client.updatedAt = now;
+    clientHistoryAdded = true;
+  }
+
+  writeDatabase(db);
+
+  return {
+    success: true,
+    task,
+    clientHistoryAdded,
+    googleCalendarEventId: task.googleCalendarEventId || task.google_event_id || null
+  };
+}
+
+export function rescheduleTask(taskId: string, newDueDate: string, newDueTime?: string, userId?: string) {
+  const db = readDatabase();
+  const task = db.tasks[taskId];
+
+  if (!task) {
+    return { success: false, error: 'Tarefa não encontrada.' };
+  }
+
+  const now = new Date().toISOString();
+  task.dueDate = newDueDate;
+  if (newDueTime !== undefined) {
+    task.dueTime = newDueTime;
+  }
+  task.completed = false;
+  task.updatedAt = now;
+
+  // If linked to a client, optionally update next contact date
+  if (task.clientId && db.clients[task.clientId]) {
+    const client = db.clients[task.clientId];
+    client.nextContactDate = newDueTime ? `${newDueDate}T${newDueTime}` : `${newDueDate}T10:00`;
+    client.updatedAt = now;
+  }
+
+  writeDatabase(db);
+
+  return {
+    success: true,
+    task
+  };
+}
+

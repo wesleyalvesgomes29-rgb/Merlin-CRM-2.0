@@ -486,7 +486,7 @@ export default function MerlinChat({
                 ) : (
                   memoryEntries.slice(0, 15).map((entry) => {
                     let badgeColor = "bg-[#161616] text-[#E5E5E5] border-[#303030]";
-                    let badgeText = entry.type;
+                    let badgeText: string = entry.type;
                     if (entry.type === 'client_created') {
                       badgeColor = "bg-[#FF7A00]/10 text-[#FF7A00] border-[#FF7A00]/20";
                       badgeText = "Lead Novo";

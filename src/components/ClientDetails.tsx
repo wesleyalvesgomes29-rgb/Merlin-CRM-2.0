@@ -460,9 +460,9 @@ export default function ClientDetails({
       id="client-profile-modal-backdrop"
     >
       <motion.div
-        initial={{ y: '100%', md: { y: 0, x: '100%' } }}
-        animate={{ y: 0, x: 0 }}
-        exit={{ y: '100%', md: { y: 0, x: '100%' } }}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 20 }}
         transition={{ type: 'spring', damping: 28, stiffness: 260 }}
         className="w-full md:max-w-2xl lg:max-w-3xl bg-white dark:bg-[#0B0B0B] h-[92vh] md:h-full flex flex-col shadow-2xl relative rounded-t-3xl md:rounded-t-none md:border-l border-slate-200 dark:border-[#2A2A2A] overflow-hidden"
         onClick={(e) => e.stopPropagation()}

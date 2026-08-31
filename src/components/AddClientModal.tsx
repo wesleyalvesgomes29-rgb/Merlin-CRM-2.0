@@ -81,13 +81,19 @@ export default function AddClientModal({
       id="add-client-modal-backdrop"
     >
       <motion.div
-        initial={{ y: 20, opacity: 0, scale: 0.96 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
-        exit={{ y: 20, opacity: 0, scale: 0.96 }}
+        initial={{ y: '100%', opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: '100%', opacity: 0 }}
+        transition={{ type: 'spring', damping: 26, stiffness: 280 }}
         className="w-full sm:max-w-xl bg-white dark:bg-[#161616] rounded-t-3xl sm:rounded-3xl shadow-2xl relative overflow-hidden border border-slate-200 dark:border-[#2A2A2A] max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
         id="add-client-modal-body"
       >
+        {/* Mobile Drag Handle */}
+        <div className="pt-2.5 pb-1 sm:hidden flex justify-center bg-slate-50 dark:bg-[#0B0B0B]">
+          <div className="w-12 h-1.5 bg-slate-300 dark:bg-[#383838] rounded-full" />
+        </div>
+
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-[#2A2A2A] bg-slate-50 dark:bg-[#0B0B0B] flex items-center justify-between">
           <div className="flex items-center gap-3">

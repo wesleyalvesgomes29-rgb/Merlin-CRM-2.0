@@ -56,6 +56,7 @@ import ClientDetails from './components/ClientDetails';
 import Commissions from './components/Commissions';
 import AddClientModal from './components/AddClientModal';
 import MyRoutine from './components/MyRoutine';
+import MobileBottomNav from './components/MobileBottomNav';
 import { motion, AnimatePresence } from 'motion/react';
 import MerlinChat from './components/MerlinChat';
 import { UserMenu } from './modules/auth';
@@ -73,7 +74,6 @@ export default function App() {
 
   // Navigation state
   const [activeTab, setActiveTab] = useState<string>('meu_dia');
-  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState<boolean>(false);
 
   // Filter overrides for navigation shortcuts
   const [clientSpecialFilter, setClientSpecialFilter] = useState<'all' | 'high_priority' | 'no_next_contact'>('all');
@@ -81,7 +81,6 @@ export default function App() {
 
   const handleTabChange = (tabName: string) => {
     setActiveTab(tabName);
-    setIsMobileMoreOpen(false);
     if (tabName !== 'clientes') {
       setClientSpecialFilter('all');
     }
@@ -695,7 +694,7 @@ export default function App() {
       </header>
 
       {/* 3. MAIN WORKSPACE CONTENT */}
-      <main className="flex-1 p-3.5 sm:p-5 md:p-8 pb-24 md:pb-8 overflow-x-hidden min-h-[calc(100vh-120px)] md:h-screen md:overflow-y-auto bg-[#0B0B0B]">
+      <main className="flex-1 p-3.5 sm:p-5 md:p-8 pb-32 md:pb-8 overflow-x-hidden min-h-[calc(100vh-120px)] md:h-screen md:overflow-y-auto bg-[#0B0B0B]">
         <div className="max-w-6xl mx-auto">
           {activeTab === 'meu_dia' && (
             <MyDay
@@ -709,6 +708,12 @@ export default function App() {
               engineResult={engineResult}
               onNavigateToClientsWithFilter={handleNavigateToClientsWithFilter}
               onNavigateToTasksWithFilter={handleNavigateToTasksWithFilter}
+              onNavigateToTab={handleTabChange}
+              onAddTask={handleAddTask}
+              onOpenAddClient={() => {
+                setInitialStatusForAdd('Lead Novo');
+                setIsAddingClient(true);
+              }}
             />
           )}
 
@@ -799,218 +804,21 @@ export default function App() {
         </div>
       </main>
 
-      {/* 4. MOBILE BOTTOM BAR NAVIGATION (ERGONOMIC 1-HANDED THUMB REACH) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#111111]/95 backdrop-blur-xl border-t border-[#303030] z-40 flex items-center justify-around h-16 pb-[env(safe-area-inset-bottom,0px)] shadow-2xl px-1">
-        {/* Meu Dia */}
-        <button
-          onClick={() => handleTabChange('meu_dia')}
-          className={`flex flex-col items-center justify-center flex-1 h-full relative touch-target transition-all cursor-pointer ${
-            activeTab === 'meu_dia' ? 'text-[#FF7A00] font-bold' : 'text-[#888888] hover:text-white'
-          }`}
-        >
-          <div className="relative">
-            <Calendar className="h-5 w-5" />
-            {todayAlertsCount > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-[#EF4444] text-white text-[8px] font-black h-4 min-w-4 px-1 rounded-full flex items-center justify-center border border-[#0B0B0B]">
-                {todayAlertsCount}
-              </span>
-            )}
-          </div>
-          <span className="text-[10px] mt-1">Meu Dia</span>
-          {activeTab === 'meu_dia' && (
-            <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-[#FF7A00]"></span>
-          )}
-        </button>
-
-        {/* Clientes */}
-        <button
-          onClick={() => handleTabChange('clientes')}
-          className={`flex flex-col items-center justify-center flex-1 h-full relative touch-target transition-all cursor-pointer ${
-            activeTab === 'clientes' ? 'text-[#FF7A00] font-bold' : 'text-[#888888] hover:text-white'
-          }`}
-        >
-          <Users className="h-5 w-5" />
-          <span className="text-[10px] mt-1">Clientes</span>
-          {activeTab === 'clientes' && (
-            <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-[#FF7A00]"></span>
-          )}
-        </button>
-
-        {/* Rotina */}
-        <button
-          onClick={() => handleTabChange('rotina')}
-          className={`flex flex-col items-center justify-center flex-1 h-full relative touch-target transition-all cursor-pointer ${
-            activeTab === 'rotina' ? 'text-[#FF7A00] font-bold' : 'text-[#888888] hover:text-white'
-          }`}
-        >
-          <div className="relative">
-            <CheckSquare className="h-5 w-5" />
-            {pendingTasksCount > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-[#F59E0B] text-[#0B0B0B] text-[8px] font-black h-4 min-w-4 px-1 rounded-full flex items-center justify-center border border-[#0B0B0B]">
-                {pendingTasksCount}
-              </span>
-            )}
-          </div>
-          <span className="text-[10px] mt-1">Rotina</span>
-          {activeTab === 'rotina' && (
-            <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-[#FF7A00]"></span>
-          )}
-        </button>
-
-        {/* Merlin AI */}
-        <button
-          onClick={() => handleTabChange('intelligence')}
-          className={`flex flex-col items-center justify-center flex-1 h-full relative touch-target transition-all cursor-pointer ${
-            activeTab === 'intelligence' ? 'text-[#FF7A00] font-bold' : 'text-[#888888] hover:text-white'
-          }`}
-        >
-          <div className="p-1 rounded-lg bg-[#FF7A00]/10 text-[#FF7A00]">
-            <Bot className="h-4.5 w-4.5" />
-          </div>
-          <span className="text-[10px] mt-0.5">Merlin AI</span>
-          {activeTab === 'intelligence' && (
-            <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-[#FF7A00]"></span>
-          )}
-        </button>
-
-        {/* Mais (Secondary Modules) */}
-        <button
-          onClick={() => setIsMobileMoreOpen(true)}
-          className={`flex flex-col items-center justify-center flex-1 h-full relative touch-target transition-all cursor-pointer ${
-            ['funil', 'comissoes', 'dashboard'].includes(activeTab)
-              ? 'text-[#FF7A00] font-bold'
-              : 'text-[#888888] hover:text-white'
-          }`}
-        >
-          <div className="relative">
-            <MoreHorizontal className="h-5 w-5" />
-            {['funil', 'comissoes', 'dashboard'].includes(activeTab) && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-[#FF7A00]"></span>
-            )}
-          </div>
-          <span className="text-[10px] mt-1">Mais</span>
-          {['funil', 'comissoes', 'dashboard'].includes(activeTab) && (
-            <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-[#FF7A00]"></span>
-          )}
-        </button>
-      </nav>
-
-      {/* 4.1. MOBILE "MAIS" BOTTOM SHEET DRAWER */}
-      <AnimatePresence>
-        {isMobileMoreOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsMobileMoreOpen(false)}
-              className="md:hidden fixed inset-0 bg-[#0B0B0B]/80 backdrop-blur-xs z-50 cursor-pointer"
-            />
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#161616] border-t border-[#303030] rounded-t-3xl p-5 pb-8 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto"
-            >
-              {/* Drag bar indicator */}
-              <div className="w-12 h-1 bg-[#303030] rounded-full mx-auto" />
-
-              <div className="flex items-center justify-between pt-1">
-                <div>
-                  <h3 className="text-base font-bold font-display text-white">
-                    Módulos & Gestão
-                  </h3>
-                  <p className="text-xs text-[#888888]">
-                    Acesso rápido a todos os recursos
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsMobileMoreOpen(false)}
-                  className="p-1.5 rounded-lg bg-[#1F1F1F] text-[#888888] hover:text-white cursor-pointer border border-[#303030]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Grid of options */}
-              <div className="grid grid-cols-1 gap-2 pt-2">
-                <button
-                  onClick={() => handleTabChange('funil')}
-                  className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                    activeTab === 'funil'
-                      ? 'bg-[#FF7A00]/15 border-[#FF7A00]/40 text-[#FF7A00]'
-                      : 'bg-[#1F1F1F] border-[#303030] text-[#E5E5E5]'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-[#FF7A00]/10 text-[#FF7A00]">
-                      <Trello className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">Funil de Vendas</p>
-                      <p className="text-xs text-[#888888]">Quadro Kanban de negociações</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-[#888888]" />
-                </button>
-
-                <button
-                  onClick={() => handleTabChange('comissoes')}
-                  className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                    activeTab === 'comissoes'
-                      ? 'bg-[#FF7A00]/15 border-[#FF7A00]/40 text-[#FF7A00]'
-                      : 'bg-[#1F1F1F] border-[#303030] text-[#E5E5E5]'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-[#FF7A00]/10 text-[#FF7A00]">
-                      <DollarSign className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">Comissões & Finanças</p>
-                      <p className="text-xs text-[#888888]">Simulador e extrato de honorários</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-[#888888]" />
-                </button>
-
-                <button
-                  onClick={() => handleTabChange('dashboard')}
-                  className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                    activeTab === 'dashboard'
-                      ? 'bg-[#FF7A00]/15 border-[#FF7A00]/40 text-[#FF7A00]'
-                      : 'bg-[#1F1F1F] border-[#303030] text-[#E5E5E5]'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-[#FF7A00]/10 text-[#FF7A00]">
-                      <LayoutDashboard className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">Resultados & Métricas</p>
-                      <p className="text-xs text-[#888888]">Performance e conversão</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-[#888888]" />
-                </button>
-              </div>
-
-              {/* Quick Add Client Button */}
-              <button
-                onClick={() => {
-                  setIsMobileMoreOpen(false);
-                  setIsAddingClient(true);
-                }}
-                className="w-full bg-[#FF7A00] hover:bg-[#FF9800] text-[#0B0B0B] font-bold p-3.5 rounded-2xl shadow-md flex items-center justify-center gap-2 text-sm active:scale-[0.98] transition-all cursor-pointer"
-              >
-                <Plus className="h-4 w-4 stroke-[2.5]" />
-                <span>Cadastrar Novo Cliente</span>
-              </button>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      {/* 4. MOBILE BOTTOM BAR NAVIGATION (SUPERAPP FINTECH STYLE) */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        onOpenAddClient={() => {
+          setInitialStatusForAdd('Lead Novo');
+          setIsAddingClient(true);
+        }}
+        todayAlertsCount={todayAlertsCount}
+        pendingTasksCount={pendingTasksCount}
+        urgentLeadsCount={clients.filter(c => {
+          const alerts = getClientAlerts(c);
+          return alerts.isUrgente && c.status !== 'Venda Fechada' && c.status !== 'Perdido';
+        }).length}
+      />
 
       {/* 5. SIDEWAYS DETAILS DRAWER (CLIENT PROFILE SCREEN) */}
       <AnimatePresence>

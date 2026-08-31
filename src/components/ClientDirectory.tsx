@@ -690,7 +690,7 @@ export default function ClientDirectory({
                         )}
                         {client.secondBrainSummary && (
                           <span 
-                            title={`Second Brain: ${client.secondBrainSummary.recommendedAngle}`}
+                            title={`Second Brain: ${typeof client.secondBrainSummary === 'object' ? client.secondBrainSummary.recommendedAngle : client.secondBrainSummary}`}
                             className="text-[9px] font-bold text-[#FD7A00] bg-[#FD7A00]/15 px-1.5 py-0.5 rounded-md border border-[#FD7A00]/30 flex items-center gap-1"
                           >
                             <Brain className="h-3 w-3" />
@@ -874,7 +874,7 @@ export default function ClientDirectory({
 
                     {client.secondBrainSummary && (
                       <span 
-                        title={`Second Brain: ${client.secondBrainSummary.recommendedAngle}`}
+                        title={`Second Brain: ${typeof client.secondBrainSummary === 'object' ? client.secondBrainSummary.recommendedAngle : client.secondBrainSummary}`}
                         className="p-1 bg-[#FD7A00]/15 text-[#FD7A00] rounded-md flex items-center"
                       >
                         <Brain className="h-3 w-3" />
