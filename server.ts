@@ -12,7 +12,10 @@ import {
   findUserById, 
   createInviteCode, 
   listInviteCodes, 
-  revokeInviteCode 
+  revokeInviteCode,
+  saveUserGoogleTokens,
+  removeUserGoogleTokens,
+  getUserGoogleTokens
 } from "./server/db";
 
 dotenv.config();
@@ -121,12 +124,313 @@ app.get("/api/auth/me", (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        createdAt: user.created_at
+        createdAt: user.created_at,
+        google_email: user.google_email,
+        google_connected_at: user.google_connected_at,
+        isGoogleConnected: !!(user.google_access_token || user.google_refresh_token)
       }
     });
   } catch (error: any) {
     console.error("[Merlin Auth] Erro no /api/auth/me:", error);
     return res.status(500).json({ error: "Erro ao consultar usuário." });
+  }
+});
+
+// ==========================================
+// MERLIN CRM - GOOGLE CALENDAR API & OAUTH2
+// ==========================================
+
+// GET /api/auth/google/url: Retorna URL de consentimento do Google OAuth2
+app.get("/api/auth/google/url", (req, res) => {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+    const scopes = [
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "openid"
+    ].join(" ");
+
+    const state = (req.query.userId as string) || "default";
+
+    if (!clientId) {
+      // Retorna instrução de client ID ou fallback para client-side token flow
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&scope=${encodeURIComponent(scopes)}&prompt=consent&access_type=offline&state=${encodeURIComponent(state)}`;
+      return res.json({
+        url: authUrl,
+        scopes,
+        isConfigured: false,
+        message: "Google Client ID não configurado no backend. Use o popup client-side ou configure GOOGLE_CLIENT_ID."
+      });
+    }
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
+
+    return res.json({
+      url: authUrl,
+      redirectUri,
+      scopes,
+      isConfigured: true
+    });
+  } catch (error: any) {
+    console.error("[Merlin Google Auth] Erro ao gerar URL:", error);
+    return res.status(500).json({ error: "Erro ao gerar URL do Google OAuth2." });
+  }
+});
+
+// POST /api/auth/google/callback: Salva tokens (obtidos via code ou token direto do cliente)
+app.post("/api/auth/google/callback", async (req, res) => {
+  try {
+    const { code, accessToken, refreshToken, expiresIn, googleEmail, userId: bodyUserId } = req.body || {};
+    const userId = (req.headers["x-user-id"] as string) || bodyUserId;
+
+    if (!userId) {
+      return res.status(401).json({ error: "Identificação do usuário (userId) necessária." });
+    }
+
+    let finalAccessToken = accessToken;
+    let finalRefreshToken = refreshToken;
+    let finalExpiresIn = expiresIn || 3600;
+    let finalEmail = googleEmail;
+
+    // Se o cliente enviou um authorization code, faz a troca por tokens com a API Google
+    if (code) {
+      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+
+      if (clientId && clientSecret) {
+        try {
+          const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              code,
+              client_id: clientId,
+              client_secret: clientSecret,
+              redirect_uri: redirectUri,
+              grant_type: "authorization_code",
+            }),
+          });
+
+          if (tokenRes.ok) {
+            const tokenData = await tokenRes.json();
+            finalAccessToken = tokenData.access_token;
+            finalRefreshToken = tokenData.refresh_token || finalRefreshToken;
+            finalExpiresIn = tokenData.expires_in;
+          }
+        } catch (tokenErr) {
+          console.warn("[Merlin Google Auth] Erro ao trocar code:", tokenErr);
+        }
+      }
+    }
+
+    // Se temos o accessToken, busca os dados de perfil / email no Google
+    if (finalAccessToken && !finalEmail) {
+      try {
+        const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+          headers: { Authorization: `Bearer ${finalAccessToken}` }
+        });
+        if (userInfoRes.ok) {
+          const userInfo = await userInfoRes.json();
+          finalEmail = userInfo.email;
+        }
+      } catch (userErr) {
+        console.warn("[Merlin Google Auth] Erro ao buscar userinfo:", userErr);
+      }
+    }
+
+    if (!finalAccessToken) {
+      return res.status(400).json({ error: "Access token ou authorization code inválido." });
+    }
+
+    const saveResult = saveUserGoogleTokens(userId, {
+      accessToken: finalAccessToken,
+      refreshToken: finalRefreshToken,
+      expiresIn: finalExpiresIn,
+      googleEmail: finalEmail
+    });
+
+    if (!saveResult.success) {
+      return res.status(400).json({ error: saveResult.error });
+    }
+
+    return res.json({
+      success: true,
+      message: "Conta Google conectada com sucesso!",
+      googleEmail: finalEmail,
+      connectedAt: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error("[Merlin Google Auth] Erro no callback:", error);
+    return res.status(500).json({ error: error.message || "Erro ao conectar conta Google." });
+  }
+});
+
+// GET /api/auth/google/status: Retorna se a conta Google está conectada
+app.get("/api/auth/google/status", (req, res) => {
+  try {
+    const userId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    if (!userId) {
+      return res.status(401).json({ isConnected: false, error: "Não autenticado." });
+    }
+
+    const tokens = getUserGoogleTokens(userId);
+    return res.json({
+      isConnected: tokens.isConnected,
+      googleEmail: tokens.googleEmail,
+      connectedAt: tokens.connectedAt,
+      isExpired: tokens.tokenExpiry ? Date.now() > tokens.tokenExpiry : false
+    });
+  } catch (error: any) {
+    console.error("[Merlin Google Auth] Erro no status:", error);
+    return res.status(500).json({ isConnected: false, error: "Erro ao verificar status do Google." });
+  }
+});
+
+// POST /api/auth/google/disconnect: Desconecta a conta Google
+app.post("/api/auth/google/disconnect", (req, res) => {
+  try {
+    const userId = (req.headers["x-user-id"] as string) || req.body?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    removeUserGoogleTokens(userId);
+    return res.json({ success: true, message: "Google Agenda desconectado com sucesso." });
+  } catch (error: any) {
+    console.error("[Merlin Google Auth] Erro ao desconectar:", error);
+    return res.status(500).json({ error: "Erro ao desconectar Google Agenda." });
+  }
+});
+
+// POST /api/calendar/create-event: Cria evento diretamente na API do Google Calendar do usuário
+app.post("/api/calendar/create-event", async (req, res) => {
+  try {
+    const { title, dueDate, dueTime, notes, clientName, priority, location, clientPhone } = req.body || {};
+    const userId = (req.headers["x-user-id"] as string) || req.body?.userId;
+
+    // Header bearer token recebido diretamente do cliente (GSI OAuth) ou dos tokens salvos no banco
+    let token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    if (!token && userId) {
+      const userTokens = getUserGoogleTokens(userId);
+      if (userTokens.accessToken) {
+        token = userTokens.accessToken;
+      }
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "Não autenticado no Google Calendar. Conecte sua conta Google no Merlin CRM.",
+        needsAuth: true
+      });
+    }
+
+    if (!title || !dueDate) {
+      return res.status(400).json({
+        success: false,
+        error: "Título e Data de vencimento (dueDate) são obrigatórios para agendamento."
+      });
+    }
+
+    // Calcula start e end ISO ou date
+    let startObj: any = {};
+    let endObj: any = {};
+
+    if (dueTime && dueTime.includes(":")) {
+      const [hStr, minStr] = dueTime.split(":");
+      const hours = parseInt(hStr, 10) || 0;
+      const minutes = parseInt(minStr, 10) || 0;
+
+      const [yStr, mStr, dStr] = dueDate.split("-");
+      const year = parseInt(yStr, 10);
+      const month = parseInt(mStr, 10) - 1;
+      const day = parseInt(dStr, 10);
+
+      const startDate = new Date(year, month, day, hours, minutes, 0);
+      const endDate = new Date(startDate.getTime() + 30 * 60 * 1000); // 30 minutos
+
+      startObj = {
+        dateTime: startDate.toISOString(),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo"
+      };
+      endObj = {
+        dateTime: endDate.toISOString(),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo"
+      };
+    } else {
+      // Evento de dia inteiro
+      startObj = { date: dueDate };
+      
+      const [yStr, mStr, dStr] = dueDate.split("-");
+      const nextDay = new Date(parseInt(yStr, 10), parseInt(mStr, 10) - 1, parseInt(dStr, 10) + 1);
+      const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+      
+      endObj = { date: nextDayStr };
+    }
+
+    const descriptionParts: string[] = [];
+    if (notes) descriptionParts.push(`📝 Detalhes: ${notes}`);
+    if (clientName) descriptionParts.push(`👤 Lead: ${clientName}`);
+    if (clientPhone) descriptionParts.push(`📞 Telefone/Whats: ${clientPhone}`);
+    if (priority) descriptionParts.push(`⚡ Prioridade: ${priority}`);
+    descriptionParts.push(`\nAgendado automaticamente pelo Merlin CRM ⚡`);
+
+    const calendarEventPayload = {
+      summary: title,
+      description: descriptionParts.join("\n"),
+      location: location || "",
+      start: startObj,
+      end: endObj,
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "popup", minutes: 30 },
+          { method: "popup", minutes: 10 }
+        ]
+      }
+    };
+
+    console.log("[Google Calendar API] Enviando evento para https://www.googleapis.com/calendar/v3/calendars/primary/events");
+
+    const googleRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(calendarEventPayload)
+    });
+
+    if (!googleRes.ok) {
+      const errorBody = await googleRes.text();
+      console.warn("[Google Calendar API] Erro retornado pela API do Google:", googleRes.status, errorBody);
+      return res.status(googleRes.status).json({
+        success: false,
+        error: `Erro retornado pelo Google Calendar (${googleRes.status})`,
+        details: errorBody
+      });
+    }
+
+    const createdEvent = await googleRes.json();
+    console.log("[Google Calendar API] Evento criado com sucesso! ID:", createdEvent.id);
+
+    return res.status(201).json({
+      success: true,
+      message: "Tarefa criada e sincronizada automaticamente no Google Agenda!",
+      eventId: createdEvent.id,
+      htmlLink: createdEvent.htmlLink
+    });
+  } catch (error: any) {
+    console.error("[Google Calendar API] Erro ao criar evento:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Erro interno ao sincronizar com o Google Calendar."
+    });
   }
 });
 

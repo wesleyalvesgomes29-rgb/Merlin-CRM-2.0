@@ -59,6 +59,8 @@ import MyRoutine from './components/MyRoutine';
 import { motion, AnimatePresence } from 'motion/react';
 import MerlinChat from './components/MerlinChat';
 import { UserMenu } from './modules/auth';
+import { useAuth } from './modules/auth/hooks/useAuth';
+import { syncTaskToGoogleCalendar } from './lib/calendarUtils';
 import merlinLogo from './assets/images/merlin_logo_transparent.png';
 
 export default function App() {
@@ -112,6 +114,8 @@ export default function App() {
   const [initialStatusForAdd, setInitialStatusForAdd] = useState<ClientStatus>('Lead Novo');
 
   const [syncStatus, setSyncStatus] = useState<SyncStatusState>(getSyncStatus());
+  const [calendarToast, setCalendarToast] = useState<{ id: string; message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const { user } = useAuth();
 
   // Initialize data on component mount & start background cloud sync
   useEffect(() => {
@@ -399,6 +403,28 @@ export default function App() {
     const updated = [newTask, ...tasks];
     setTasks(updated);
     saveStoredTasks(updated);
+
+    // Automatic background synchronization with Google Calendar
+    syncTaskToGoogleCalendar({
+      title: newTask.notes || `${newTask.actionType} - ${newTask.clientName || 'Cliente'}`,
+      notes: newTask.notes,
+      dueDate: newTask.dueDate,
+      dueTime: newTask.dueTime,
+      clientName: newTask.clientName,
+      priority: newTask.priority,
+      userId: user?.id
+    }).then(res => {
+      if (res.success) {
+        setCalendarToast({
+          id: String(Date.now()),
+          message: 'Tarefa criada e sincronizada automaticamente no Google Agenda!',
+          type: 'success'
+        });
+        setTimeout(() => setCalendarToast(null), 5000);
+      }
+    }).catch(err => {
+      console.warn('[Calendar Sync] Background sync note:', err);
+    });
   };
 
   const handleToggleTaskComplete = (taskId: string) => {
@@ -1010,6 +1036,32 @@ export default function App() {
             onClose={() => setIsAddingClient(false)}
             onSave={handleAddClient}
           />
+        )}
+      </AnimatePresence>
+
+      {/* 7. TOAST DE SINCRONIZAÇÃO AUTOMÁTICA DO GOOGLE CALENDAR */}
+      <AnimatePresence>
+        {calendarToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-[#111827] text-white border border-emerald-500/40 px-4 py-3.5 rounded-2xl shadow-2xl backdrop-blur-md max-w-md"
+          >
+            <div className="p-2 rounded-xl bg-emerald-500/20 text-[#34D399] border border-emerald-500/30">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <div className="flex-1 text-xs">
+              <p className="font-bold text-emerald-400">Google Agenda Sincronizado</p>
+              <p className="text-slate-300 mt-0.5">{calendarToast.message}</p>
+            </div>
+            <button
+              onClick={() => setCalendarToast(null)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
 

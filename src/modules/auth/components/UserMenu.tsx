@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { LogOut, User as UserIcon, KeyRound, Shield } from 'lucide-react';
+import { LogOut, User as UserIcon, KeyRound, Shield, Calendar } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { AdminInviteModal } from './AdminInviteModal';
+import { GoogleIntegrationModal } from '../../../components/GoogleIntegrationModal';
+import { getStoredGoogleAccessToken } from '../../../lib/calendarUtils';
 
 interface UserMenuProps {
   compact?: boolean;
@@ -10,15 +12,35 @@ interface UserMenuProps {
 export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
   const { user, logout } = useAuth();
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [hasGoogleToken, setHasGoogleToken] = useState<boolean>(() => {
+    return !!(user?.isGoogleConnected || getStoredGoogleAccessToken());
+  });
 
   if (!user) return null;
 
   const isAdmin = user.role === 'admin';
+  const isGoogleConnected = hasGoogleToken || user.isGoogleConnected;
 
   if (compact) {
     return (
       <>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowGoogleModal(true)}
+            title={isGoogleConnected ? 'Google Agenda Conectado (Auto Sync)' : 'Conectar Google Agenda'}
+            className={`p-2 rounded-lg transition-all cursor-pointer flex items-center justify-center relative ${
+              isGoogleConnected 
+                ? 'bg-emerald-500/15 text-[#34D399] hover:bg-emerald-500/25' 
+                : 'hover:bg-[#222222] text-[#888888] hover:text-blue-400'
+            }`}
+          >
+            <Calendar className="h-4 w-4" />
+            {isGoogleConnected && (
+              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[#34D399] rounded-full animate-pulse" />
+            )}
+          </button>
+
           {isAdmin && (
             <button
               onClick={() => setShowInviteModal(true)}
@@ -44,6 +66,12 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
             onClose={() => setShowInviteModal(false)}
           />
         )}
+
+        <GoogleIntegrationModal
+          isOpen={showGoogleModal}
+          onClose={() => setShowGoogleModal(false)}
+          onStatusChange={(status) => setHasGoogleToken(status)}
+        />
       </>
     );
   }
@@ -79,6 +107,25 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
           </button>
         </div>
 
+        {/* Botão de Integração com Google Agenda */}
+        <button
+          type="button"
+          onClick={() => setShowGoogleModal(true)}
+          className={`w-full text-[11px] font-bold py-1.5 px-2.5 rounded-lg flex items-center justify-between gap-1.5 transition-all cursor-pointer border ${
+            isGoogleConnected
+              ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-[#34D399] border-emerald-500/30'
+              : 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/25'
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-3.5 w-3.5" />
+            <span>Google Agenda</span>
+          </div>
+          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-black/40">
+            {isGoogleConnected ? 'Ativo ⚡' : 'Conectar'}
+          </span>
+        </button>
+
         {isAdmin && (
           <button
             type="button"
@@ -97,6 +144,13 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
           onClose={() => setShowInviteModal(false)}
         />
       )}
+
+      <GoogleIntegrationModal
+        isOpen={showGoogleModal}
+        onClose={() => setShowGoogleModal(false)}
+        onStatusChange={(status) => setHasGoogleToken(status)}
+      />
     </>
   );
 };
+

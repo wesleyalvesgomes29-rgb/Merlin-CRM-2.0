@@ -70,5 +70,7 @@ export interface Task {
   notes?: string;
   completed: boolean;
   createdAt: string;
+  googleCalendarEventId?: string;
+  googleCalendarHtmlLink?: string;
 }
 

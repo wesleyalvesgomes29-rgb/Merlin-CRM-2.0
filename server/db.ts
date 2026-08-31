@@ -15,6 +15,11 @@ export interface DbUser {
   password_hash: string;
   salt: string;
   role: 'admin' | 'broker';
+  google_access_token?: string | null;
+  google_refresh_token?: string | null;
+  google_token_expiry?: number | null;
+  google_email?: string | null;
+  google_connected_at?: string | null;
   created_at: string;
 }
 
@@ -365,8 +370,84 @@ export async function loginUser(email: string, password: string): Promise<{ succ
       name: user.name,
       email: user.email,
       role: user.role,
-      created_at: user.created_at
+      created_at: user.created_at,
+      google_email: user.google_email,
+      google_connected_at: user.google_connected_at,
+      isGoogleConnected: !!(user.google_access_token || user.google_refresh_token)
     }
+  };
+}
+
+export function saveUserGoogleTokens(userId: string, tokens: {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  googleEmail?: string;
+}): { success: boolean; error?: string } {
+  const db = readDatabase();
+  const user = db.users?.[userId];
+  if (!user) {
+    return { success: false, error: 'Usuário não encontrado.' };
+  }
+
+  const now = Date.now();
+  if (tokens.accessToken) {
+    user.google_access_token = tokens.accessToken;
+  }
+  if (tokens.refreshToken) {
+    user.google_refresh_token = tokens.refreshToken;
+  }
+  if (tokens.expiresIn) {
+    user.google_token_expiry = now + (tokens.expiresIn * 1000);
+  }
+  if (tokens.googleEmail) {
+    user.google_email = tokens.googleEmail;
+  }
+  user.google_connected_at = new Date().toISOString();
+
+  writeDatabase(db);
+  return { success: true };
+}
+
+export function removeUserGoogleTokens(userId: string): { success: boolean; error?: string } {
+  const db = readDatabase();
+  const user = db.users?.[userId];
+  if (!user) {
+    return { success: false, error: 'Usuário não encontrado.' };
+  }
+
+  user.google_access_token = null;
+  user.google_refresh_token = null;
+  user.google_token_expiry = null;
+  user.google_email = null;
+  user.google_connected_at = null;
+
+  writeDatabase(db);
+  return { success: true };
+}
+
+export function getUserGoogleTokens(userId: string): {
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  tokenExpiry?: number | null;
+  googleEmail?: string | null;
+  connectedAt?: string | null;
+  isConnected: boolean;
+} {
+  const db = readDatabase();
+  const user = db.users?.[userId];
+  if (!user) {
+    return { isConnected: false };
+  }
+
+  const isConnected = !!(user.google_access_token || user.google_refresh_token);
+  return {
+    accessToken: user.google_access_token,
+    refreshToken: user.google_refresh_token,
+    tokenExpiry: user.google_token_expiry,
+    googleEmail: user.google_email,
+    connectedAt: user.google_connected_at,
+    isConnected
   };
 }
 

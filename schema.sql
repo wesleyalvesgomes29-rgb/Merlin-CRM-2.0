@@ -9,7 +9,27 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   role TEXT DEFAULT 'broker', -- 'admin' ou 'broker'
+  google_access_token TEXT,
+  google_refresh_token TEXT,
+  google_token_expiry INTEGER,
+  google_email TEXT,
+  google_connected_at TEXT,
   created_at TEXT NOT NULL
+);
+
+-- Tabela de Integrações de Usuário (opcional / suporte robusto a múltiplos serviços)
+CREATE TABLE IF NOT EXISTS user_integrations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL, -- 'google_calendar'
+  access_token TEXT,
+  refresh_token TEXT,
+  token_expiry INTEGER,
+  account_email TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- 2. Tabela de Códigos de Convite Secreto

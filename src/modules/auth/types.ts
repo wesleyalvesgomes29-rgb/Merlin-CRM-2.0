@@ -7,6 +7,9 @@ export interface User {
   avatarUrl?: string;
   role: UserRole;
   createdAt: string;
+  google_email?: string | null;
+  google_connected_at?: string | null;
+  isGoogleConnected?: boolean;
 }
 
 export interface AuthSession {
