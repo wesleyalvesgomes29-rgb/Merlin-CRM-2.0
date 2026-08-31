@@ -52,12 +52,12 @@ export const SALES_PLAYBOOK_PILLARS: PlaybookPillar[] = [
       {
         title: 'Abordagem Inicial Padrão',
         description: 'Primeira mensagem enviada para leads recém-chegados.',
-        template: `Prazer, {NOME}! Meu nome é {CORRETOR}, sou consultor imobiliário. Vi seu interesse em um dos nossos empreendimentos e estou entrando em contato para entender melhor o que você busca hoje e te passar as condições que mais fazem sentido pra você.\n\nHoje você busca o imóvel mais para morar ou investir?`
+        template: `Prazer {NOME}! Meu nome é {CORRETOR}, sou consultor aqui da INC Empreendimentos. Vi seu interesse em um dos nossos empreendimentos e estou entrando em contato para entender melhor o que você busca hoje e te passar as condições que podem fazer mais sentido pra você.\n\nHoje você busca o imóvel mais para morar ou investir?`
       },
       {
         title: 'Abordagem Direta com Menção ao Imóvel',
         description: 'Quando o lead já veio de anúncio específico.',
-        template: `Olá, {NOME}! Tudo joia? Aqui é o {CORRETOR}. Vi que você solicitou informações sobre {EMPREENDIMENTO}.\n\nEstou separando os detalhes mais importantes para você. Só para eu te orientar certinho: você está buscando esse imóvel pensando em moradia própria ou para investimento?`
+        template: `Olá, {NOME}! Tudo joia? Aqui é o {CORRETOR}, da INC Empreendimentos. Vi que você solicitou informações sobre {EMPREENDIMENTO}.\n\nEstou separando os detalhes mais importantes para você. Só para eu te orientar certinho: você está buscando esse imóvel pensando em moradia própria ou para investimento?`
       }
     ]
   },
@@ -85,7 +85,7 @@ export const SALES_PLAYBOOK_PILLARS: PlaybookPillar[] = [
       {
         title: 'Lead respondeu que "Já comprou/Já resolveu"',
         description: 'Manter a porta aberta e entender o perfil real.',
-        template: `Perfeito, {NOME}! Fico feliz que tenha conseguido resolver! 🎉\n\nSó para eu atualizar seu cadastro aqui e não te incomodar mais com esse assunto: você acabou adquirindo para morar ou foi mais pensando em investimento?`
+        template: `Perfeito, {NOME}! Fico feliz que tenha conseguido resolver! 🎉\n\nSó para eu deixar registrado aqui e não te enviar mensagens desnecessárias: você acabou adquirindo para morar ou foi mais pensando em investimento?`
       }
     ]
   },
@@ -226,44 +226,78 @@ export const SALES_PLAYBOOK_PILLARS: PlaybookPillar[] = [
   }
 ];
 
+export interface PlaybookPromptVariables {
+  clientName: string;
+  brokerName?: string;
+  companyName?: string;
+  clientInterest?: string;
+  clientNotes?: string;
+  clientStatus?: string;
+  intentId: PlaybookPillarId;
+  goal?: string;
+  customInstructions?: string;
+  secondBrainContext?: string;
+}
+
 /**
  * Gera as instruções completas do Livreto de Scripts Comerciais para injetar no System Prompt do Gemini.
+ * O nome da empresa/imobiliária e o nome do corretor são 100% dinâmicos e adaptáveis.
  */
-export function buildPlaybookSystemPrompt(): string {
-  return `=== METODOLOGIA COMERCIAL OBRIGATÓRIA: LIVRETO DE SCRIPTS COMERCIAIS (INC EMPREENDIMENTOS) ===
-Você é o motor de inteligência e copywriting comercial do Merlin CRM, treinado rigorosamente na metodologia de atendimento e vendas de alta conversão imobiliária.
+export function buildPlaybookSystemPrompt(companyName: string = "consultoria imobiliária especializada"): string {
+  const cleanCompany = companyName.trim() || "consultoria imobiliária especializada";
 
-SUAS DIRETRIZES FUNDAMENTAIS DE COPYWRITING:
-1. REGRA DE OURO (SEM INFODUMP):
-   - NUNCA despeje informações demais, tabelas gigantescas ou descrições prolixas de imóveis.
+  return `=== METODOLOGIA COMERCIAL OBRIGATÓRIA: LIVRETO DE SCRIPTS COMERCIAIS (${cleanCompany.toUpperCase()}) ===
+Você é o motor de inteligência e copywriting comercial do Merlin CRM, treinado rigorosamente na metodologia de atendimento e vendas de alta conversão imobiliária e Minha Casa Minha Vida (Caixa Econômica Federal).
+
+🚫 REGRAS ANTI-BUROCRACIA & VETOS CRÍTICOS (LEIA COM MÁXIMA ATENÇÃO):
+1. PROIBIÇÃO ABSOLUTA DE JARGÕES DE SISTEMA:
+   - NUNCA invente ou use falas como "vi que seu cadastro está com pendências", "faltam dados no seu cadastro", "seu perfil está incompleto", "precisamos atualizar suas informações no sistema" ou qualquer menção a banco de dados/CRM.
+   - Campos vazios ou não preenchidos no CRM significam APENAS que o lead acabou de chegar (Lead Novo), e NUNCA que ele tem pendências, dívidas ou problemas.
+   - O corretor SEMPRE se comunica como um consultor humano, caloroso, acolhedor e focado em ajudar o cliente.
+
+2. NOMES DINÂMICOS OBRIGATÓRIOS (NUNCA FIXE NOMES PADRÃO):
+   - Utilize SEMPRE o nome do corretor/consultor informado no contexto (${cleanCompany}) e NUNCA assuma nomes fictícios (ex: "Wesley" ou "INC Empreendimentos" NÃO devem ser usados a menos que tenham sido expressamente informados no prompt).
+   - Se o nome da empresa for informado, mencione "${cleanCompany}". Caso contrário, apresente-se como consultor imobiliário especializado.
+
+3. REGRA DE OURO (SEM INFODUMP):
+   - NUNCA despeje informações demais, tabelas pesadas ou descrições prolixas de empreendimentos.
    - O objetivo da mensagem NÃO é vender o imóvel por texto, mas sim CONDUZIR A CONVERSA para o próximo passo concreto.
-   - Faça apenas UMA pergunta chave por mensagem. Entenda a resposta antes de avançar.
-   - Textos curtos, naturais, humanizados, com quebras de linha e emojis usados com extrema elegância (1 a 3 no máximo).
+   - Faça apenas UMA pergunta chave por mensagem. Textos curtos, prontos para WhatsApp, com quebras de linha e emojis elegantes (1 a 3 no máximo).
 
-2. REGRA DO PRÓXIMO PASSO CONCRETO:
-   - Toda mensagem deve impulsionar o lead para o próximo estágio natural:
-     * Entender renda familiar e se mora ou investe.
-     * Descobrir se há composição familiar ou tempo de FGTS/CLT.
-     * Superar objeção e encaminhar pré-análise de crédito da Caixa.
-     * Solicitar checklist de documentação ou agendar visita presencial.
+4. TÉCNICA OBRIGATÓRIA DE FECHAMENTO (DUPLA ALTERNATIVA / EITHER-OR):
+   - TODA e qualquer mensagem gerada para o cliente DEVE TERMINAR OBRIGATORIAMENTE com uma pergunta em DUPLA ALTERNATIVA (escolha binária simples).
 
-3. TÉCNICA OBRIGATÓRIA DE FECHAMENTO (PERGUNTA DE DUPLA ALTERNATIVA / EITHER-OR):
-   - TODA e qualquer mensagem gerada para o cliente DEVE TERMINAR OBRIGATORIAMENTE com uma pergunta estruturada em "DUPLA ALTERNATIVA" (escolha binária simples).
-   - Exemplos obrigatórios de fechamento em dupla alternativa:
-     * "Hoje você busca o imóvel mais para morar ou investir?"
-     * "Você prefere que eu te envie a planta térrea com quintal ou o vídeo do decorado?"
-     * "Você prefere me enviar as fotos dos documentos por aqui no WhatsApp ou prefere vir até o plantão?"
-     * "Segunda-feira pela manhã ou na parte da tarde fica melhor para conversarmos?"
-     * "Essa renda seria só sua ou existiria possibilidade de compor com alguém da família?"
-     * "Você prefere ver opções no Bairro Novo Mundo ou na região Central?"
+🎯 ESTRUTURA DOS PILARES METODOLÓGICOS DO LIVRETO:
 
-4. ESTRUTURA DOS PILARES METODOLÓGICOS DO LIVRETO:
-   - PILAR 1 (Lead Novo): Apresentação rápida -> Sondar morar ou investir.
-   - PILAR 2 (Retrabalho / Lead Frio): Pergunta direta com condição concreta (60x / mensais a partir de R$ 700) -> Pedir confirmação ("Sim"). Se já comprou -> Sondar se foi moradia ou investimento.
-   - PILAR 3 (Objeções / MCMV / Caixa): Desmistificar a análise da Caixa -> Explicar subsídio e FGTS de forma leve -> Pedir a média salarial familiar.
-   - PILAR 4 (Renda Baixa / Investidor): Para renda baixa -> Investigar composição e tempo CLT. Para investidor -> Sondar se quer rentabilidade de aluguel ou valorização.
-   - PILAR 5 (Reversão Casa -> Térreo com Quintal): Descobrir o motivo do desejo por casa -> Conectar no Térreo com Quintal (Garden) unindo espaço privativo + segurança do condomínio.
-   - PILAR 6 (Pré-Análise & Docs): Transição para análise Caixa -> Enviar checklist formatado e limpo de docs -> Oferecer envio por WhatsApp ou atendimento presencial.
+• PILAR 1: PRIMEIRO CONTATO (LEAD NOVO)
+  - Estrutura Mandatória:
+    "Prazer [NOME_DO_CLIENTE]! Meu nome é [NOME_DO_CONSULTOR], sou consultor aqui da [NOME_DA_EMPRESA]. Vi seu interesse em um dos nossos empreendimentos [ou {EMPREENDIMENTO}] e estou entrando em contato para entender melhor o que você busca hoje e te passar as condições que podem fazer mais sentido pra você.\n\nHoje você busca o imóvel mais para morar ou investir?"
+  - Pergunta de Fechamento: "Hoje você busca o imóvel mais para morar ou investir?"
+
+• PILAR 2: RETRABALHO / RESGATE DE LEAD PARADO
+  - Estrutura Mandatória:
+    Apresentação educada + Oferta com âncora financeira concreta (ex: parcelamento de entrada em até 60x, mensais a partir de R$ 700 / condição de tabela) + Pedido de micro-compromisso simples.
+  - Pergunta de Fechamento: "Me responde um 'Sim' aqui, só para eu saber se faz sentido eu te apresentar o projeto agora?" OU "Você ainda está avaliando opções de imóveis ou já conseguiu encontrar o que buscava?"
+
+• PILAR 3: OBJEÇÕES, MCMV & FINANCIAMENTO CAIXA
+  - Estrutura Mandatória:
+    Acalmar o cliente ("Fica tranquilo [NOME], é bem mais simples do que parece! 😊") + Explicar de forma didática e simples como a Caixa viabiliza o financiamento (juros reduzidos, subsídio do governo que abate no valor e uso do FGTS) + Conduzir para a qualificação de renda.
+  - Pergunta de Fechamento: "Hoje sua renda mensal fica mais próxima de R$ 2.500 ou acima de R$ 4.000?" OU "Você pretende comprar sozinho ou compondo renda com alguém da família?"
+
+• PILAR 4: QUALIFICAÇÃO DE RENDA BAIXA OU PERFIL INVESTIDOR
+  - Se Renda Baixa / Composição: Investigar se há cônjuge/familiar para somar renda e se tem mais de 3 anos de carteira CLT.
+  - Se Investidor: Sondar o objetivo estratégico.
+  - Pergunta de Fechamento: "Essa renda seria só sua ou teria a possibilidade de compor com alguém da família?" OU "O que mais te atrai hoje: rentabilidade com locação ou ganho de capital na valorização até as chaves?"
+
+• PILAR 5: REVERSÃO (QUER CASA ➔ TÉRREO COM QUINTAL / GARDEN)
+  - Estrutura Mandatória:
+    Validar o desejo genuíno por espaço/quintal/pet + Apresentar a unidade térrea com quintal privativo (Garden) como a solução inteligente que une o espaço e quintal de uma casa com a segurança 24h e lazer de condomínio fechado.
+  - Pergunta de Fechamento: "Você prefere que eu te envie as fotos da planta térrea com quintal ou o vídeo do decorado?"
+
+• PILAR 6: ENCAMINHAMENTO DE PRÉ-ANÁLISE & DOCUMENTAÇÃO
+  - Estrutura Mandatória:
+    Apresentar a pré-análise de crédito gratuita na Caixa como um benefício inteligente (para travar taxas menores e subsídio sem compromisso) antes de pedir os documentos + Checklist limpo e organizado em tópicos (RG, Comprovante, Certidão, 3 Holerites, Carteira de Trabalho, Extrato FGTS).
+  - Pergunta de Fechamento: "Você prefere me enviar as fotos dos documentos por aqui no WhatsApp ou prefere agendar um café no nosso plantão para fazermos juntos?"
 
 FORMATO DE RESPOSTA OBRIGATÓRIO (JSON):
 Você DEVE SEMPRE responder em JSON estrito com exatamente duas abordagens personalizadas para o corretor escolher:
@@ -272,15 +306,15 @@ Você DEVE SEMPRE responder em JSON estrito com exatamente duas abordagens perso
     {
       "label": "Opção Direta / Objetiva",
       "style": "direta",
-      "text": "Texto da mensagem em português..."
+      "text": "Texto pronto da mensagem para WhatsApp..."
     },
     {
       "label": "Opção Consultiva / Acolhedora",
       "style": "consultiva",
-      "text": "Texto da mensagem em português..."
+      "text": "Texto pronto da mensagem para WhatsApp..."
     }
   ],
-  "goldenTip": "Dica rápida para o corretor sobre como conduzir o próximo passo deste lead específico."
+  "goldenTip": "Dica prática de condução para o corretor."
 }
 `;
 }
@@ -295,11 +329,14 @@ export function getPlaybookFallbackOptions(
     empreendimento?: string;
     notes?: string;
     brokerName?: string;
+    companyName?: string;
   }
 ): { options: { label: string; style: string; text: string }[]; goldenTip: string } {
   const name = clientData.name || 'Cliente';
-  const broker = clientData.brokerName || 'seu consultor';
+  const broker = clientData.brokerName?.trim() || 'seu consultor';
+  const company = clientData.companyName?.trim() || '';
   const emp = clientData.empreendimento || 'o imóvel de seu interesse';
+  const companyIntro = company ? ` aqui da ${company}` : '';
 
   switch (intent) {
     case 'retrabalho':
@@ -308,12 +345,12 @@ export function getPlaybookFallbackOptions(
           {
             label: 'Opção Direta / Objetiva',
             style: 'direta',
-            text: `Bom dia ${name}, tudo joia? Aqui é o ${broker}. Vi que você interagiu com nosso anúncio sobre imóveis um tempo atrás.\n\nDeixa eu te fazer uma pergunta bem direta: Se hoje eu te apresentasse uma condição em ${emp} onde você consegue parcelar a entrada em até 60x, com mensais a partir de R$ 700,00, faria sentido para você conhecer? Pegando uma das últimas unidades com essa condição.\n\nMe responde um "Sim" aqui, só para eu saber se faz sentido eu te apresentar o projeto agora?`
+            text: `Bom dia ${name}, tudo joia? Aqui é o ${broker}${company ? `, da ${company}` : ''}. Vi que você interagiu com nosso anúncio sobre imóveis um tempo atrás.\n\nDeixa eu te fazer uma pergunta bem direta: Se hoje eu te apresentasse uma condição em ${emp} onde você consegue parcelar a entrada em até 60x, com mensais a partir de R$ 700,00, faria sentido para você conhecer? Pegando uma das últimas unidades com essa condição.\n\nMe responde um "Sim" aqui, só para eu saber se faz sentido eu te apresentar o projeto agora?`
           },
           {
             label: 'Opção Consultiva / Acolhedora',
             style: 'consultiva',
-            text: `Olá, ${name}! Tudo bem com você? Aqui é o ${broker}.\n\nEstive revisando algumas oportunidades exclusivas e lembrei do seu perfil. Conseguimos uma negociação diferenciada para ${emp}, com entrada super facilitada e fluxo sob medida.\n\nVocê ainda está avaliando opções no mercado ou já conseguiu encontrar o imóvel ideal?`
+            text: `Olá, ${name}! Tudo bem com você? Aqui é o ${broker}${company ? `, da ${company}` : ''}.\n\nEstive revisando algumas oportunidades exclusivas e lembrei do seu perfil. Conseguimos uma negociação diferenciada para ${emp}, com entrada super facilitada e fluxo sob medida.\n\nVocê ainda está avaliando opções no mercado ou já conseguiu encontrar o imóvel ideal?`
           }
         ],
         goldenTip: 'Se o cliente responder "Sim", não despeje a tabela: pergunte imediatamente qual a média de renda familiar para checar o enquadramento.'
@@ -325,12 +362,12 @@ export function getPlaybookFallbackOptions(
           {
             label: 'Opção Direta / Objetiva',
             style: 'direta',
-            text: `Oi ${name}, tudo bem? Entendi que você tem preferência por casa! Me fala uma coisa: o que mais pesa para você hoje na ideia de casa? Mais espaço de quintal para pet/família ou mais privacidade no dia a dia?`
+            text: `Oi ${name}, tudo bem? Aqui é o ${broker}${company ? ` da ${company}` : ''}. Entendi que você tem preferência por casa! Me fala uma coisa: o que mais pesa para você hoje na ideia de casa? Mais espaço de quintal para pet/família ou mais privacidade no dia a dia?`
           },
           {
             label: 'Opção Consultiva / Acolhedora',
             style: 'consultiva',
-            text: `Olá, ${name}! Entendo perfeitamente o seu desejo por uma casa. Justamente por isso lembrei de você: temos unidades térreas com quintal privativo em ${emp}, que entregam a mesma sensação de espaço de uma casa com a segurança de um condomínio fechado.\n\nVocê prefere que eu te envie as fotos da planta térrea ou o vídeo do espaço com quintal?`
+            text: `Olá, ${name}! Aqui é o ${broker}${company ? ` da ${company}` : ''}. Entendo perfeitamente o seu desejo por uma casa. Justamente por isso lembrei de você: temos unidades térreas com quintal privativo em ${emp}, que entregam a mesma sensação de espaço de uma casa com a segurança de um condomínio fechado.\n\nVocê prefere que eu te envie as fotos da planta térrea ou o vídeo do espaço com quintal?`
           }
         ],
         goldenTip: 'Apresente o apartamento térreo com quintal como a solução inteligente que une espaço privativo com segurança e lazer.'
@@ -347,7 +384,7 @@ export function getPlaybookFallbackOptions(
           {
             label: 'Opção Consultiva / Acolhedora',
             style: 'consultiva',
-            text: `Olá, ${name}! O Minha Casa Minha Vida foi feito justamente para viabilizar o imóvel próprio com entrada parcelada e juros baixos. Conseguimos montar um fluxo personalizado para o seu bolso.\n\nPara eu fazer uma prévia exata: você pretende comprar sozinho ou somando renda com alguém da família?`
+            text: `Olá, ${name}! Aqui é o ${broker}${company ? ` da ${company}` : ''}. O Minha Casa Minha Vida foi feito justamente para viabilizar o imóvel próprio com entrada parcelada e juros baixos. Conseguimos montar um fluxo personalizado para o seu bolso.\n\nPara eu fazer uma prévia exata: você pretende comprar sozinho ou somando renda com alguém da família?`
           }
         ],
         goldenTip: 'Desmistifique o processo da Caixa e ancore na renda para calcular o subsídio e valor liberado.'
@@ -381,7 +418,7 @@ export function getPlaybookFallbackOptions(
           {
             label: 'Opção Consultiva / Acolhedora',
             style: 'consultiva',
-            text: `Olá, ${name}! Para investidores em ${emp}, temos opções com excelente rentabilidade de locação e ganho de valorização na planta.\n\nO que mais te atrai hoje: fluxo de aluguel mensal ou valorização na entrega das chaves?`
+            text: `Olá, ${name}! Aqui é o ${broker}${company ? ` da ${company}` : ''}. Para investidores em ${emp}, temos opções com excelente rentabilidade de locação e ganho de valorização na planta.\n\nO que mais te atrai hoje: fluxo de aluguel mensal ou valorização na entrega das chaves?`
           }
         ],
         goldenTip: 'Investigue composição familiar ou direcione o investidor para sua meta financeira principal.'
@@ -394,12 +431,12 @@ export function getPlaybookFallbackOptions(
           {
             label: 'Opção Direta / Objetiva',
             style: 'direta',
-            text: `Prazer, ${name}! Meu nome é ${broker}, sou consultor imobiliário. Vi seu interesse em ${emp} e quero te passar as melhores condições de tabela.\n\nHoje você busca esse imóvel mais para morar ou investir?`
+            text: `Prazer ${name}! Meu nome é ${broker}, sou consultor${companyIntro}. Vi seu interesse em um dos nossos empreendimentos${emp !== 'o imóvel de seu interesse' ? ` (${emp})` : ''} e estou entrando em contato para entender melhor o que você busca hoje e te passar as condições que podem fazer mais sentido pra você.\n\nHoje você busca o imóvel mais para morar ou investir?`
           },
           {
             label: 'Opção Consultiva / Acolhedora',
             style: 'consultiva',
-            text: `Olá, ${name}! Tudo bem com você? Aqui é o ${broker}. Recebi seu contato referente a ${emp}.\n\nEstou separando as opções e condições que mais se encaixam no que você precisa. Você está buscando esse imóvel pensando em moradia própria ou investimento?`
+            text: `Olá, ${name}! Tudo bem com você? Aqui é o ${broker}${company ? `, da ${company}` : ''}.\n\nVi seu interesse no ${emp} e estou à disposição para te auxiliar com todas as informações e simulações personalizadas.\n\nHoje você busca esse imóvel pensando em moradia própria ou para investimento?`
           }
         ],
         goldenTip: 'Nunca envie catálogo completo ou tabela de cara: descubra primeiro se é moradia ou investimento.'

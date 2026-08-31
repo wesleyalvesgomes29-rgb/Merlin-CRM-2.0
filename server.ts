@@ -1731,7 +1731,8 @@ app.post("/api/gemini/generate-message", async (req, res) => {
       clientStatus, 
       secondBrainSummary,
       playbookIntent = "primeiro-contato",
-      brokerName = "seu consultor",
+      brokerName,
+      companyName,
       customInstructions
     } = req.body || {};
 
@@ -1739,8 +1740,11 @@ app.post("/api/gemini/generate-message", async (req, res) => {
       return res.status(400).json({ error: "O nome do cliente é obrigatório." });
     }
 
+    const effectiveBrokerName = (brokerName && typeof brokerName === "string" && brokerName.trim()) ? brokerName.trim() : "consultor imobiliário";
+    const effectiveCompanyName = (companyName && typeof companyName === "string" && companyName.trim()) ? companyName.trim() : "consultoria imobiliária especializada";
+
     const intentId = (playbookIntent as PlaybookPillarId) || "primeiro-contato";
-    const systemPrompt = buildPlaybookSystemPrompt();
+    const systemPrompt = buildPlaybookSystemPrompt(effectiveCompanyName);
 
     let secondBrainContext = "";
     if (secondBrainSummary && typeof secondBrainSummary === "object") {
@@ -1754,21 +1758,28 @@ app.post("/api/gemini/generate-message", async (req, res) => {
 *Diretriz Comportamental*: Use estes insights para direcionar a mensagem, eliminando objeções com naturalidade.`;
     }
 
-    const userPrompt = `Gere scripts de abordagem comercial para este lead aplicando o Livreto de Scripts Comerciais:
+    const userPrompt = `Gere scripts de abordagem comercial para este lead aplicando rigorosamente o Livreto de Scripts Comerciais:
 - Nome do Cliente: ${clientName}
-- Nome do Corretor/Consultor: ${brokerName}
-- Empreendimento de Interesse: ${clientInterest || "Não especificado ainda"}
-- Perfil/Notas do Cliente: ${clientNotes || "Sem observações adicionais"}
+- Nome do Corretor/Consultor: ${effectiveBrokerName}
+- Imobiliária / Construtora / Empresa: ${effectiveCompanyName}
+- Empreendimento de Interesse: ${clientInterest || "um dos nossos empreendimentos"}
+- Perfil/Notas do Cliente: ${clientNotes || "Lead recém-chegado (sem observações anteriores)"}
 - Etapa atual do Funil: ${clientStatus || "Lead Novo"}
-- Pilar / Intenção do Playbook: ${intentId}
+- Pilar / Intenção Selecionada: ${intentId}
 - Objetivo Declarado: ${goal || "Conduzir para o próximo passo"}
-${customInstructions ? `- Instrução Adicional do Corretor: ${customInstructions}` : ""}
+${customInstructions ? `- Instrução Específica do Corretor: ${customInstructions}` : ""}
 ${secondBrainContext}
 
+🚫 PROIBIÇÕES ABSOLUTAS:
+1. NUNCA mencione "cadastro com pendências", "dados incompletos", "atualizar cadastro no sistema", "falta de informações" ou qualquer jargão de CRM.
+2. Campos em branco significam apenas que o lead acabou de chegar, JAMAIS que ele está pendente ou com problemas.
+3. Se for 'primeiro-contato', siga a fórmula acolhedora exata do Playbook: Saudação calorosa + apresentação como consultor (${effectiveBrokerName}${effectiveCompanyName !== "consultoria imobiliária especializada" ? ` da ${effectiveCompanyName}` : ""}) + conexão com interesse no imóvel + pergunta mandatória "Hoje você busca o imóvel mais para morar ou investir?".
+4. NUNCA use nomes fictícios como "Wesley" ou "INC Empreendimentos" a menos que exatamente esses nomes tenham sido informados nos campos acima.
+
 REGRAS MANDATÓRIAS:
-1. NÃO faça infodump. Mantenha os textos enxutos, humanos e prontos para WhatsApp.
+1. Textos 100% humanizados, acolhedores, sem infodump e prontos para envio no WhatsApp.
 2. Cada uma das 2 opções DEVE TERMINAR OBRIGATORIAMENTE com uma pergunta em DUPLA ALTERNATIVA (either/or).
-3. Retorne ESTRITAMENTE o JSON estruturado com 'options' (contendo a Opção Direta e a Opção Consultiva) e 'goldenTip'.`;
+3. Retorne ESTRITAMENTE o JSON estruturado com 'options' (Opção Direta e Opção Consultiva) e 'goldenTip'.`;
 
     try {
       const ai = getGoogleGenAI();
@@ -1797,7 +1808,8 @@ REGRAS MANDATÓRIAS:
         name: clientName,
         empreendimento: clientInterest,
         notes: clientNotes,
-        brokerName
+        brokerName: effectiveBrokerName,
+        companyName: effectiveCompanyName !== "consultoria imobiliária especializada" ? effectiveCompanyName : undefined
       });
       return res.json({
         success: true,

@@ -49,6 +49,7 @@ import {
 import { motion } from 'motion/react';
 import DocumentsTab from '../modules/documents/components/DocumentsTab';
 import { SALES_PLAYBOOK_PILLARS, PlaybookPillarId, PlaybookPillar } from '../lib/salesPlaybook';
+import { useAuth } from '../modules/auth/hooks/useAuth';
 
 interface ClientDetailsProps {
   client: Client;
@@ -94,6 +95,8 @@ export default function ClientDetails({
   const [messageGoal, setMessageGoal] = useState('Quebra-gelo amigável e sondagem de momento');
   const [copiedMessage, setCopiedMessage] = useState(false);
 
+  const { user } = useAuth();
+
   // Advanced Playbook Commercial Script States
   const [selectedPlaybookPillar, setSelectedPlaybookPillar] = useState<PlaybookPillarId>(() => {
     if (client.status === 'Retrabalho') return 'retrabalho';
@@ -101,7 +104,8 @@ export default function ClientDetails({
     if (client.status === 'Proposta') return 'objecao-mcmv-caixa';
     return 'primeiro-contato';
   });
-  const [brokerName, setBrokerName] = useState('Wesley');
+  const [brokerName, setBrokerName] = useState(() => user?.name?.trim() || '');
+  const [companyName, setCompanyName] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
   const [generatedOptions, setGeneratedOptions] = useState<{ label: string; style: string; text: string }[]>([]);
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
@@ -386,7 +390,8 @@ export default function ClientDetails({
           clientStatus: client.status,
           secondBrainSummary: client.secondBrainSummary,
           playbookIntent: selectedPlaybookPillar,
-          brokerName: brokerName.trim() || 'seu consultor',
+          brokerName: brokerName.trim() || undefined,
+          companyName: companyName.trim() || undefined,
           customInstructions: customInstructions.trim() || undefined
         })
       });
@@ -1422,24 +1427,34 @@ export default function ClientDetails({
                                 Roteiros Validados do Livreto para esta Etapa:
                               </span>
                               <div className="space-y-2">
-                                {currentPillar.standardScripts.map((sc, idx) => (
-                                  <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCopyMessage(sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName))}
-                                        className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
-                                      >
-                                        <Copy className="h-3 w-3" />
-                                        <span>Copiar Script Padrão</span>
-                                      </button>
+                                {currentPillar.standardScripts.map((sc, idx) => {
+                                  const effectiveBroker = brokerName.trim() || 'consultor imobiliário';
+                                  const effectiveCompany = companyName.trim() || 'consultoria imobiliária especializada';
+                                  const scriptText = sc.template
+                                    .replace(/\{NOME\}|\[NOME_CLIENTE\]/g, client.name)
+                                    .replace(/\{EMPREENDIMENTO\}|\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel')
+                                    .replace(/\{CORRETOR\}|\[SEU_NOME\]/g, effectiveBroker)
+                                    .replace(/INC Empreendimentos/g, effectiveCompany);
+
+                                  return (
+                                    <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCopyMessage(scriptText)}
+                                          className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <Copy className="h-3 w-3" />
+                                          <span>Copiar Script Padrão</span>
+                                        </button>
+                                      </div>
+                                      <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
+                                        {scriptText}
+                                      </p>
                                     </div>
-                                    <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
-                                      {sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName)}
-                                    </p>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
@@ -1448,7 +1463,7 @@ export default function ClientDetails({
                     })()}
 
                     {/* Generator Controls */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
                           Seu Nome de Consultor:
@@ -1457,20 +1472,33 @@ export default function ClientDetails({
                           type="text"
                           value={brokerName}
                           onChange={(e) => setBrokerName(e.target.value)}
-                          placeholder="Ex: Wesley"
+                          placeholder="Ex: Seu Nome"
                           className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
                         />
                       </div>
 
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
-                          Instrução Específica / Detalhe Adicional (Opcional):
+                          Imobiliária / Empresa:
+                        </label>
+                        <input
+                          type="text"
+                          value={companyName}
+                          onChange={(e) => setCompanyName(e.target.value)}
+                          placeholder="Ex: Minha Imobiliária"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Instrução Específica (Opcional):
                         </label>
                         <input
                           type="text"
                           value={customInstructions}
                           onChange={(e) => setCustomInstructions(e.target.value)}
-                          placeholder="Ex: É autônomo, prefere falar após as 18h"
+                          placeholder="Ex: É autônomo, falar após 18h"
                           className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
                         />
                       </div>
@@ -1692,30 +1720,82 @@ export default function ClientDetails({
                                 Roteiros Validados do Livreto:
                               </span>
                               <div className="space-y-2">
-                                {currentPillar.standardScripts.map((sc, idx) => (
-                                  <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCopyMessage(sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName))}
-                                        className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
-                                      >
-                                        <Copy className="h-3 w-3" />
-                                        <span>Copiar Script</span>
-                                      </button>
+                                {currentPillar.standardScripts.map((sc, idx) => {
+                                  const effectiveBroker = brokerName.trim() || 'consultor imobiliário';
+                                  const effectiveCompany = companyName.trim() || 'consultoria imobiliária especializada';
+                                  const scriptText = sc.template
+                                    .replace(/\{NOME\}|\[NOME_CLIENTE\]/g, client.name)
+                                    .replace(/\{EMPREENDIMENTO\}|\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel')
+                                    .replace(/\{CORRETOR\}|\[SEU_NOME\]/g, effectiveBroker)
+                                    .replace(/INC Empreendimentos/g, effectiveCompany);
+
+                                  return (
+                                    <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCopyMessage(scriptText)}
+                                          className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <Copy className="h-3 w-3" />
+                                          <span>Copiar Script</span>
+                                        </button>
+                                      </div>
+                                      <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
+                                        {scriptText}
+                                      </p>
                                     </div>
-                                    <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
-                                      {sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName)}
-                                    </p>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
                         </div>
                       );
                     })()}
+
+                    {/* Generator Controls for Quick Playbook */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Seu Nome de Consultor:
+                        </label>
+                        <input
+                          type="text"
+                          value={brokerName}
+                          onChange={(e) => setBrokerName(e.target.value)}
+                          placeholder="Ex: Seu Nome"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Imobiliária / Empresa:
+                        </label>
+                        <input
+                          type="text"
+                          value={companyName}
+                          onChange={(e) => setCompanyName(e.target.value)}
+                          placeholder="Ex: Minha Imobiliária"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Instrução Específica (Opcional):
+                        </label>
+                        <input
+                          type="text"
+                          value={customInstructions}
+                          onChange={(e) => setCustomInstructions(e.target.value)}
+                          placeholder="Ex: É autônomo, falar após 18h"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+                    </div>
 
                     <button
                       type="button"
