@@ -33,10 +33,22 @@ import {
   Target,
   ShieldAlert,
   Heart,
-  Compass
+  Compass,
+  BookOpen,
+  Edit3,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+  Lightbulb,
+  CheckCheck,
+  Building2,
+  PieChart,
+  Home,
+  FileCheck
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import DocumentsTab from '../modules/documents/components/DocumentsTab';
+import { SALES_PLAYBOOK_PILLARS, PlaybookPillarId, PlaybookPillar } from '../lib/salesPlaybook';
 
 interface ClientDetailsProps {
   client: Client;
@@ -74,13 +86,29 @@ export default function ClientDetails({
   const [isEditingGeneral, setIsEditingGeneral] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'informacoes' | 'historico' | 'atendimentos' | 'agenda' | 'documentos' | 'second-brain'>('informacoes');
 
-  // Second Brain states
+  // Second Brain & Playbook states
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [synthesisError, setSynthesisError] = useState<string | null>(null);
   const [isGeneratingMessage, setIsGeneratingMessage] = useState(false);
   const [generatedMessage, setGeneratedMessage] = useState('');
   const [messageGoal, setMessageGoal] = useState('Quebra-gelo amigável e sondagem de momento');
   const [copiedMessage, setCopiedMessage] = useState(false);
+
+  // Advanced Playbook Commercial Script States
+  const [selectedPlaybookPillar, setSelectedPlaybookPillar] = useState<PlaybookPillarId>(() => {
+    if (client.status === 'Retrabalho') return 'retrabalho';
+    if (client.status === 'Documentação') return 'pre-analise-docs';
+    if (client.status === 'Proposta') return 'objecao-mcmv-caixa';
+    return 'primeiro-contato';
+  });
+  const [brokerName, setBrokerName] = useState('Wesley');
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [generatedOptions, setGeneratedOptions] = useState<{ label: string; style: string; text: string }[]>([]);
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
+  const [playbookGoldenTip, setPlaybookGoldenTip] = useState('');
+  const [showPlaybookCheatSheet, setShowPlaybookCheatSheet] = useState(false);
+  const [isEditingOption, setIsEditingOption] = useState(false);
+  const [editableOptionText, setEditableOptionText] = useState('');
 
   const parsedSecondBrain = useMemo<SecondBrainSummary | null>(() => {
     if (!client.secondBrainSummary) return null;
@@ -356,7 +384,10 @@ export default function ClientDetails({
           clientNotes: client.notes,
           goal: messageGoal,
           clientStatus: client.status,
-          secondBrainSummary: client.secondBrainSummary
+          secondBrainSummary: client.secondBrainSummary,
+          playbookIntent: selectedPlaybookPillar,
+          brokerName: brokerName.trim() || 'seu consultor',
+          customInstructions: customInstructions.trim() || undefined
         })
       });
 
@@ -364,17 +395,36 @@ export default function ClientDetails({
       if (!res.ok) {
         throw new Error(data.error || 'Erro ao gerar mensagem');
       }
-      setGeneratedMessage(data.text || '');
+
+      if (data.options && Array.isArray(data.options) && data.options.length > 0) {
+        setGeneratedOptions(data.options);
+        setActiveOptionIndex(0);
+        setEditableOptionText(data.options[0].text);
+        setGeneratedMessage(data.options[0].text);
+        setPlaybookGoldenTip(data.goldenTip || '');
+      } else if (data.text) {
+        const fallbackOpts = [
+          { label: 'Opção Direta / Objetiva', style: 'direta', text: data.text },
+          { label: 'Opção Consultiva / Acolhedora', style: 'consultiva', text: data.text }
+        ];
+        setGeneratedOptions(fallbackOpts);
+        setActiveOptionIndex(0);
+        setEditableOptionText(data.text);
+        setGeneratedMessage(data.text);
+        setPlaybookGoldenTip(data.goldenTip || 'Conduza para o próximo passo com uma pergunta de dupla alternativa.');
+      }
     } catch (err: any) {
-      console.error('Erro ao gerar mensagem:', err);
+      console.error('Erro ao gerar mensagem com Playbook:', err);
     } finally {
       setIsGeneratingMessage(false);
+      setIsEditingOption(false);
     }
   };
 
-  const handleCopyMessage = () => {
-    if (!generatedMessage) return;
-    navigator.clipboard.writeText(generatedMessage);
+  const handleCopyMessage = (textToCopy?: string) => {
+    const targetText = textToCopy || editableOptionText || generatedMessage;
+    if (!targetText) return;
+    navigator.clipboard.writeText(targetText);
     setCopiedMessage(true);
     setTimeout(() => setCopiedMessage(false), 2500);
   };
@@ -1278,75 +1328,249 @@ export default function ClientDetails({
                     </p>
                   </div>
 
-                  {/* AI Copywriter based on Second Brain */}
-                  <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 sm:p-5 space-y-4">
-                    <div className="flex items-center justify-between">
+                  {/* SECTION: SALES PLAYBOOK COMMERCIAL SCRIPTS GENERATOR */}
+                  <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-[#2A2A2A]">
                       <div className="flex items-center gap-2 text-slate-900 dark:text-white">
-                        <MessageSquare className="h-4 w-4 text-[#FD7A00]" />
-                        <h4 className="text-xs font-bold uppercase tracking-wider">Gerador de Mensagem Humanizada (Copywriting IA)</h4>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-[#FD7A00]/10 text-[#FD7A00] rounded-md">
-                        Metodologia Comercial
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
-                        Objetivo do Contato:
-                      </label>
-                      <div className="flex flex-wrap sm:flex-nowrap gap-2">
-                        <select
-                          value={messageGoal}
-                          onChange={(e) => setMessageGoal(e.target.value)}
-                          className="flex-1 text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
-                        >
-                          <option value="Quebra-gelo amigável e sondagem de momento">Quebra-gelo amigável e sondagem de momento</option>
-                          <option value="Convite irresistível para visita ao decorado/imóvel">Convite irresistível para visita ao decorado/imóvel</option>
-                          <option value="Reaquecimento de lead parado com oferta especial">Reaquecimento de lead parado com oferta especial</option>
-                          <option value="Superar objeção de fluxo de pagamento com simulação">Superar objeção de fluxo de pagamento com simulação</option>
-                          <option value="Apresentação consultiva de lançamento exclusivo">Apresentação consultiva de lançamento exclusivo</option>
-                        </select>
-
-                        <button
-                          onClick={handleGenerateMessage}
-                          disabled={isGeneratingMessage}
-                          className="px-4 py-2.5 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs whitespace-nowrap active:scale-95"
-                        >
-                          <Sparkles className={`h-3.5 w-3.5 ${isGeneratingMessage ? 'animate-spin' : ''}`} />
-                          <span>{isGeneratingMessage ? 'Gerando Script...' : 'Gerar Script'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {generatedMessage && (
-                      <div className="space-y-3 pt-2">
-                        <div className="bg-emerald-500/10 dark:bg-emerald-950/25 border border-emerald-500/25 rounded-2xl p-4 relative">
-                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1.5 flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Script Pronto para Envio (WhatsApp / Email)
-                          </span>
-                          <p className="text-xs text-slate-800 dark:text-[#E5E5E5] whitespace-pre-wrap leading-relaxed">
-                            {generatedMessage}
+                        <div className="p-2 rounded-xl bg-[#FD7A00]/15 text-[#FD7A00]">
+                          <BookOpen className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold uppercase tracking-wider">Livreto de Scripts Comerciais</h4>
+                          <p className="text-[10px] text-slate-500 dark:text-[#888888]">
+                            Metodologia humanizada, condução por etapas e perguntas de dupla alternativa.
                           </p>
                         </div>
+                      </div>
 
-                        <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowPlaybookCheatSheet(!showPlaybookCheatSheet)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-[#FD7A00] dark:hover:text-[#FD7A00] bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <FileText className="h-3 w-3 text-[#FD7A00]" />
+                          <span>{showPlaybookCheatSheet ? 'Ocultar Roteiros Padrão' : 'Ver Roteiros Padrão do Livreto'}</span>
+                          {showPlaybookCheatSheet ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </button>
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 rounded-md">
+                          Regra Anti-Infodump
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pillar Selector Pills */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888] flex items-center gap-1">
+                        <Layers className="h-3 w-3 text-[#FD7A00]" />
+                        <span>Selecione a Etapa Comercial / Intenção do Contato:</span>
+                      </label>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                        {SALES_PLAYBOOK_PILLARS.map((pillar) => {
+                          const isSelected = selectedPlaybookPillar === pillar.id;
+                          return (
+                            <button
+                              key={pillar.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedPlaybookPillar(pillar.id);
+                                setMessageGoal(pillar.title);
+                              }}
+                              className={`p-2 rounded-xl text-left transition-all border text-xs cursor-pointer flex flex-col justify-between ${
+                                isSelected
+                                  ? 'bg-[#FD7A00]/15 border-[#FD7A00] text-slate-900 dark:text-white shadow-xs font-bold ring-1 ring-[#FD7A00]'
+                                  : 'bg-white dark:bg-[#202020] border-slate-200 dark:border-[#2A2A2A] text-slate-600 dark:text-[#CCCCCC] hover:border-slate-300 dark:hover:border-[#383838]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#2A2A2A] text-slate-600 dark:text-slate-300 font-bold shrink-0">
+                                  {pillar.badge}
+                                </span>
+                                <span className="font-semibold truncate text-[11px]">{pillar.shortTitle}</span>
+                              </div>
+                              <span className="text-[9px] text-slate-400 dark:text-[#888888] line-clamp-1">
+                                {pillar.subtitle}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Active Pillar Guideline Box */}
+                    {(() => {
+                      const currentPillar = SALES_PLAYBOOK_PILLARS.find(p => p.id === selectedPlaybookPillar) || SALES_PLAYBOOK_PILLARS[0];
+                      return (
+                        <div className="bg-amber-500/10 dark:bg-amber-950/20 border border-amber-500/25 rounded-xl p-3 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <Lightbulb className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-800 dark:text-slate-200">
+                                <strong className="text-amber-700 dark:text-amber-300">Regra de Ouro:</strong> {currentPillar.goldenRule}
+                              </p>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                                <strong className="text-slate-800 dark:text-slate-200">Fechamento Dupla Alternativa:</strong> &ldquo;{currentPillar.closingQuestionExample}&rdquo;
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Cheat Sheet Expandable */}
+                          {showPlaybookCheatSheet && (
+                            <div className="mt-3 pt-3 border-t border-amber-500/20 space-y-2.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block">
+                                Roteiros Validados do Livreto para esta Etapa:
+                              </span>
+                              <div className="space-y-2">
+                                {currentPillar.standardScripts.map((sc, idx) => (
+                                  <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopyMessage(sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName))}
+                                        className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        <span>Copiar Script Padrão</span>
+                                      </button>
+                                    </div>
+                                    <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
+                                      {sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName)}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Generator Controls */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Seu Nome de Consultor:
+                        </label>
+                        <input
+                          type="text"
+                          value={brokerName}
+                          onChange={(e) => setBrokerName(e.target.value)}
+                          placeholder="Ex: Wesley"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                          Instrução Específica / Detalhe Adicional (Opcional):
+                        </label>
+                        <input
+                          type="text"
+                          value={customInstructions}
+                          onChange={(e) => setCustomInstructions(e.target.value)}
+                          placeholder="Ex: É autônomo, prefere falar após as 18h"
+                          className="w-full text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleGenerateMessage}
+                      disabled={isGeneratingMessage}
+                      className="w-full py-3 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm whitespace-nowrap active:scale-[0.99] transition-all"
+                    >
+                      <Sparkles className={`h-4 w-4 ${isGeneratingMessage ? 'animate-spin' : ''}`} />
+                      <span>{isGeneratingMessage ? 'Gerando Abordagens com Playbook Comercial...' : 'Gerar Scripts Personalizados (Opção Direta vs. Consultiva)'}</span>
+                    </button>
+
+                    {/* Generated Results Area with 2 Options */}
+                    {generatedOptions.length > 0 && (
+                      <div className="space-y-4 pt-3 border-t border-slate-200 dark:border-[#2A2A2A]">
+                        {/* Option Tabs Header */}
+                        <div className="flex items-center gap-2 bg-slate-200/60 dark:bg-[#202020] p-1 rounded-xl">
+                          {generatedOptions.map((opt, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setActiveOptionIndex(idx);
+                                setEditableOptionText(opt.text);
+                                setGeneratedMessage(opt.text);
+                                setIsEditingOption(false);
+                              }}
+                              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                activeOptionIndex === idx
+                                  ? 'bg-white dark:bg-[#111111] text-[#FD7A00] shadow-xs'
+                                  : 'text-slate-600 dark:text-[#999999] hover:text-slate-900 dark:hover:text-white'
+                              }`}
+                            >
+                              <span>{idx === 0 ? '🎯' : '🤝'}</span>
+                              <span>{opt.label}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Active Option Box */}
+                        <div className="bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 rounded-2xl p-4 space-y-3 relative">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>{generatedOptions[activeOptionIndex]?.label} • Pronta para WhatsApp</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingOption(!isEditingOption)}
+                              className="text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              <span>{isEditingOption ? 'Concluir Ajuste' : 'Editar Texto'}</span>
+                            </button>
+                          </div>
+
+                          {isEditingOption ? (
+                            <textarea
+                              value={editableOptionText}
+                              onChange={(e) => setEditableOptionText(e.target.value)}
+                              rows={5}
+                              className="w-full text-xs bg-white dark:bg-[#1c1c1c] border border-slate-300 dark:border-[#333333] rounded-xl p-3 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                            />
+                          ) : (
+                            <p className="text-xs text-slate-800 dark:text-[#E5E5E5] whitespace-pre-wrap leading-relaxed font-sans bg-white/70 dark:bg-[#141414]/70 p-3.5 rounded-xl border border-emerald-500/15 shadow-2xs">
+                              {editableOptionText || generatedOptions[activeOptionIndex]?.text}
+                            </p>
+                          )}
+
+                          {playbookGoldenTip && (
+                            <div className="bg-white/90 dark:bg-[#161616] p-2.5 rounded-xl border border-emerald-500/20 text-[11px] text-slate-700 dark:text-slate-300 flex items-start gap-2">
+                              <Lightbulb className="h-3.5 w-3.5 text-[#FD7A00] shrink-0 mt-0.5" />
+                              <span><strong>Dica de Condução:</strong> {playbookGoldenTip}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           <button
-                            onClick={handleCopyMessage}
-                            className="px-3 py-1.5 bg-white dark:bg-[#222222] hover:bg-slate-100 dark:hover:bg-[#2A2A2A] border border-slate-200 dark:border-[#2A2A2A] text-slate-700 dark:text-[#E5E5E5] text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
+                            type="button"
+                            onClick={() => handleCopyMessage(editableOptionText || generatedOptions[activeOptionIndex]?.text)}
+                            className="px-3.5 py-2 bg-white dark:bg-[#222222] hover:bg-slate-100 dark:hover:bg-[#2A2A2A] border border-slate-200 dark:border-[#2A2A2A] text-slate-700 dark:text-[#E5E5E5] text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
                           >
-                            <Copy className="h-3.5 w-3.5" />
-                            <span>{copiedMessage ? 'Copiado! ✓' : 'Copiar Texto'}</span>
+                            <Copy className="h-3.5 w-3.5 text-[#FD7A00]" />
+                            <span>{copiedMessage ? 'Copiado para a Área de Transferência! ✓' : 'Copiar Texto'}</span>
                           </button>
 
                           <a
-                            href={`https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(generatedMessage)}`}
+                            href={`https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(editableOptionText || generatedOptions[activeOptionIndex]?.text || '')}`}
                             target="_blank"
                             referrerPolicy="no-referrer"
-                            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors"
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors"
                           >
                             <Send className="h-3.5 w-3.5" />
-                            <span>Enviar no WhatsApp</span>
+                            <span>Abrir no WhatsApp</span>
                           </a>
                         </div>
                       </div>
@@ -1354,29 +1578,241 @@ export default function ClientDetails({
                   </div>
                 </div>
               ) : (
-                /* Empty State */
-                <div className="text-center py-10 px-6 bg-slate-50 dark:bg-[#161616] border border-dashed border-slate-200 dark:border-[#2A2A2A] rounded-3xl space-y-4">
-                  <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-amber-500/20 via-[#FD7A00]/20 to-transparent flex items-center justify-center text-[#FD7A00]">
-                    <Brain className="h-7 w-7" />
+                /* Empty State for Second Brain with Direct Playbook Access */
+                <div className="space-y-6">
+                  <div className="text-center py-8 px-6 bg-slate-50 dark:bg-[#161616] border border-dashed border-slate-200 dark:border-[#2A2A2A] rounded-3xl space-y-4">
+                    <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-amber-500/20 via-[#FD7A00]/20 to-transparent flex items-center justify-center text-[#FD7A00]">
+                      <Brain className="h-6 w-6" />
+                    </div>
+
+                    <div className="max-w-md mx-auto space-y-1.5">
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                        Síntese comportamental não gerada ainda
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-[#888888] leading-relaxed">
+                        Sintetize o histórico do lead para mapear dores emocionais e refinar a geração de scripts comerciais.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleSynthesizeSecondBrain}
+                      disabled={isSynthesizing}
+                      className="px-5 py-2.5 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md active:scale-95 transition-all"
+                    >
+                      <Sparkles className={`h-4 w-4 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                      <span>{isSynthesizing ? 'Analisando Histórico do Lead...' : 'Gerar Síntese com IA'}</span>
+                    </button>
                   </div>
 
-                  <div className="max-w-md mx-auto space-y-1.5">
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Nenhuma síntese comportamental gerada ainda
-                    </h4>
-                    <p className="text-xs text-slate-500 dark:text-[#888888] leading-relaxed">
-                      O Second Brain analisa o perfil, observações, etiquetas e todas as anotações do lead para mapear dores emocionais, momento de vida, objeções ocultas e o melhor gancho de fechamento.
-                    </p>
-                  </div>
+                  {/* Even without synthesis, allow Playbook commercial generation */}
+                  <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-[#2A2A2A]">
+                      <div className="flex items-center gap-2 text-slate-900 dark:text-white">
+                        <div className="p-2 rounded-xl bg-[#FD7A00]/15 text-[#FD7A00]">
+                          <BookOpen className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold uppercase tracking-wider">Livreto de Scripts Comerciais</h4>
+                          <p className="text-[10px] text-slate-500 dark:text-[#888888]">
+                            Gere abordagens comerciais instantâneas usando o Playbook.
+                          </p>
+                        </div>
+                      </div>
 
-                  <button
-                    onClick={handleSynthesizeSecondBrain}
-                    disabled={isSynthesizing}
-                    className="px-5 py-2.5 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md active:scale-95 transition-all"
-                  >
-                    <Sparkles className={`h-4 w-4 ${isSynthesizing ? 'animate-spin' : ''}`} />
-                    <span>{isSynthesizing ? 'Analisando Histórico do Lead...' : 'Gerar Síntese com IA'}</span>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowPlaybookCheatSheet(!showPlaybookCheatSheet)}
+                        className="px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-[#FD7A00] dark:hover:text-[#FD7A00] bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <FileText className="h-3 w-3 text-[#FD7A00]" />
+                        <span>{showPlaybookCheatSheet ? 'Ocultar Roteiros' : 'Ver Roteiros Padrão'}</span>
+                        {showPlaybookCheatSheet ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      </button>
+                    </div>
+
+                    {/* Pillar Selector Pills */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888] flex items-center gap-1">
+                        <Layers className="h-3 w-3 text-[#FD7A00]" />
+                        <span>Selecione a Etapa Comercial:</span>
+                      </label>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                        {SALES_PLAYBOOK_PILLARS.map((pillar) => {
+                          const isSelected = selectedPlaybookPillar === pillar.id;
+                          return (
+                            <button
+                              key={pillar.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedPlaybookPillar(pillar.id);
+                                setMessageGoal(pillar.title);
+                              }}
+                              className={`p-2 rounded-xl text-left transition-all border text-xs cursor-pointer flex flex-col justify-between ${
+                                isSelected
+                                  ? 'bg-[#FD7A00]/15 border-[#FD7A00] text-slate-900 dark:text-white shadow-xs font-bold ring-1 ring-[#FD7A00]'
+                                  : 'bg-white dark:bg-[#202020] border-slate-200 dark:border-[#2A2A2A] text-slate-600 dark:text-[#CCCCCC] hover:border-slate-300 dark:hover:border-[#383838]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#2A2A2A] text-slate-600 dark:text-slate-300 font-bold shrink-0">
+                                  {pillar.badge}
+                                </span>
+                                <span className="font-semibold truncate text-[11px]">{pillar.shortTitle}</span>
+                              </div>
+                              <span className="text-[9px] text-slate-400 dark:text-[#888888] line-clamp-1">
+                                {pillar.subtitle}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Active Pillar Guideline Box */}
+                    {(() => {
+                      const currentPillar = SALES_PLAYBOOK_PILLARS.find(p => p.id === selectedPlaybookPillar) || SALES_PLAYBOOK_PILLARS[0];
+                      return (
+                        <div className="bg-amber-500/10 dark:bg-amber-950/20 border border-amber-500/25 rounded-xl p-3 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <Lightbulb className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-800 dark:text-slate-200">
+                                <strong className="text-amber-700 dark:text-amber-300">Regra de Ouro:</strong> {currentPillar.goldenRule}
+                              </p>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                                <strong className="text-slate-800 dark:text-slate-200">Fechamento Dupla Alternativa:</strong> &ldquo;{currentPillar.closingQuestionExample}&rdquo;
+                              </p>
+                            </div>
+                          </div>
+
+                          {showPlaybookCheatSheet && (
+                            <div className="mt-3 pt-3 border-t border-amber-500/20 space-y-2.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block">
+                                Roteiros Validados do Livreto:
+                              </span>
+                              <div className="space-y-2">
+                                {currentPillar.standardScripts.map((sc, idx) => (
+                                  <div key={idx} className="bg-white dark:bg-[#1C1C1C] p-3 rounded-lg border border-slate-200 dark:border-[#2E2E2E] space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold text-slate-500 dark:text-[#888888]">{sc.title}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopyMessage(sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName))}
+                                        className="text-[10px] font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        <span>Copiar Script</span>
+                                      </button>
+                                    </div>
+                                    <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono text-[11px]">
+                                      {sc.template.replace(/\[NOME_CLIENTE\]/g, client.name).replace(/\[EMPREENDIMENTO\]/g, client.empreendimento || 'o imóvel').replace(/\[SEU_NOME\]/g, brokerName)}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    <button
+                      type="button"
+                      onClick={handleGenerateMessage}
+                      disabled={isGeneratingMessage}
+                      className="w-full py-3 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm whitespace-nowrap active:scale-[0.99] transition-all"
+                    >
+                      <Sparkles className={`h-4 w-4 ${isGeneratingMessage ? 'animate-spin' : ''}`} />
+                      <span>{isGeneratingMessage ? 'Gerando Abordagens com Playbook Comercial...' : 'Gerar Scripts Personalizados (Opção Direta vs. Consultiva)'}</span>
+                    </button>
+
+                    {generatedOptions.length > 0 && (
+                      <div className="space-y-4 pt-3 border-t border-slate-200 dark:border-[#2A2A2A]">
+                        <div className="flex items-center gap-2 bg-slate-200/60 dark:bg-[#202020] p-1 rounded-xl">
+                          {generatedOptions.map((opt, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setActiveOptionIndex(idx);
+                                setEditableOptionText(opt.text);
+                                setGeneratedMessage(opt.text);
+                                setIsEditingOption(false);
+                              }}
+                              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                activeOptionIndex === idx
+                                  ? 'bg-white dark:bg-[#111111] text-[#FD7A00] shadow-xs'
+                                  : 'text-slate-600 dark:text-[#999999] hover:text-slate-900 dark:hover:text-white'
+                              }`}
+                            >
+                              <span>{idx === 0 ? '🎯' : '🤝'}</span>
+                              <span>{opt.label}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/25 rounded-2xl p-4 space-y-3 relative">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>{generatedOptions[activeOptionIndex]?.label}</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingOption(!isEditingOption)}
+                              className="text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              <span>{isEditingOption ? 'Concluir Ajuste' : 'Editar Texto'}</span>
+                            </button>
+                          </div>
+
+                          {isEditingOption ? (
+                            <textarea
+                              value={editableOptionText}
+                              onChange={(e) => setEditableOptionText(e.target.value)}
+                              rows={5}
+                              className="w-full text-xs bg-white dark:bg-[#1c1c1c] border border-slate-300 dark:border-[#333333] rounded-xl p-3 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                            />
+                          ) : (
+                            <p className="text-xs text-slate-800 dark:text-[#E5E5E5] whitespace-pre-wrap leading-relaxed font-sans bg-white/70 dark:bg-[#141414]/70 p-3.5 rounded-xl border border-emerald-500/15 shadow-2xs">
+                              {editableOptionText || generatedOptions[activeOptionIndex]?.text}
+                            </p>
+                          )}
+
+                          {playbookGoldenTip && (
+                            <div className="bg-white/90 dark:bg-[#161616] p-2.5 rounded-xl border border-emerald-500/20 text-[11px] text-slate-700 dark:text-slate-300 flex items-start gap-2">
+                              <Lightbulb className="h-3.5 w-3.5 text-[#FD7A00] shrink-0 mt-0.5" />
+                              <span><strong>Dica de Condução:</strong> {playbookGoldenTip}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyMessage(editableOptionText || generatedOptions[activeOptionIndex]?.text)}
+                            className="px-3.5 py-2 bg-white dark:bg-[#222222] hover:bg-slate-100 dark:hover:bg-[#2A2A2A] border border-slate-200 dark:border-[#2A2A2A] text-slate-700 dark:text-[#E5E5E5] text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-[#FD7A00]" />
+                            <span>{copiedMessage ? 'Copiado! ✓' : 'Copiar Texto'}</span>
+                          </button>
+
+                          <a
+                            href={`https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(editableOptionText || generatedOptions[activeOptionIndex]?.text || '')}`}
+                            target="_blank"
+                            referrerPolicy="no-referrer"
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Abrir no WhatsApp</span>
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

@@ -21,6 +21,7 @@ import {
   saveBrokerMemory,
   readDatabase
 } from "./server/db";
+import { buildPlaybookSystemPrompt, getPlaybookFallbackOptions, PlaybookPillarId } from "./src/lib/salesPlaybook";
 
 dotenv.config();
 
@@ -1719,18 +1720,27 @@ Gere o JSON de síntese comportamental do Second Brain:`;
   }
 });
 
-// API Route: Generate personalized copy/script for a lead
+// API Route: Generate personalized copy/script for a lead based on Sales Playbook
 app.post("/api/gemini/generate-message", async (req, res) => {
   try {
-    const { clientName, clientInterest, clientNotes, goal, clientStatus, secondBrainSummary } = req.body;
+    const { 
+      clientName, 
+      clientInterest, 
+      clientNotes, 
+      goal, 
+      clientStatus, 
+      secondBrainSummary,
+      playbookIntent = "primeiro-contato",
+      brokerName = "seu consultor",
+      customInstructions
+    } = req.body || {};
 
     if (!clientName) {
       return res.status(400).json({ error: "O nome do cliente é obrigatório." });
     }
 
-    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho com metodologia humanizada do Second Brain.
-Seu objetivo é criar mensagens de abordagem curtas, humanas, extremamente persuasivas e amigáveis para envio via WhatsApp ou Email.
-Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão genuína. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+    const intentId = (playbookIntent as PlaybookPillarId) || "primeiro-contato";
+    const systemPrompt = buildPlaybookSystemPrompt();
 
     let secondBrainContext = "";
     if (secondBrainSummary && typeof secondBrainSummary === "object") {
@@ -1741,35 +1751,60 @@ Evite textos excessivamente formais, robóticos, artificiais ou repletos de jarg
   * Critério de Decisão: ${secondBrainSummary.decisionCriteria || "Não especificado"}
   * Ângulo Recomendado: ${secondBrainSummary.recommendedAngle || "Abordagem consultiva"}
   * Nível de Urgência: ${secondBrainSummary.urgencyLevel || "Média"}
-*Diretriz Second Brain*: Use esses pontos comportamentais para criar um gancho natural, tratando as objeções de forma sutil e empática sem parecer vendedor insistente.`;
+*Diretriz Comportamental*: Use estes insights para direcionar a mensagem, eliminando objeções com naturalidade.`;
     }
 
-    const userPrompt = `Crie um script personalizado de abordagem rápida para o seguinte cliente:
+    const userPrompt = `Gere scripts de abordagem comercial para este lead aplicando o Livreto de Scripts Comerciais:
 - Nome do Cliente: ${clientName}
+- Nome do Corretor/Consultor: ${brokerName}
 - Empreendimento de Interesse: ${clientInterest || "Não especificado ainda"}
 - Perfil/Notas do Cliente: ${clientNotes || "Sem observações adicionais"}
 - Etapa atual do Funil: ${clientStatus || "Lead Novo"}
-- Objetivo da mensagem: ${goal || "Fazer um contato inicial para entender as necessidades"}
+- Pilar / Intenção do Playbook: ${intentId}
+- Objetivo Declarado: ${goal || "Conduzir para o próximo passo"}
+${customInstructions ? `- Instrução Adicional do Corretor: ${customInstructions}` : ""}
 ${secondBrainContext}
 
-Instruções Adicionais:
-- Escreva a mensagem em português do Brasil.
-- A mensagem deve parecer escrita manualmente por um corretor de imóveis real (humanizado, amigável).
-- Use o nome do cliente no início de forma natural.
-- Tenha um gancho de chamada para ação claro (Call to Action), convidando para uma resposta simples ou um agendamento rápido de conversa.
-- Retorne APENAS a mensagem pronta, sem introduções ou explicações.`;
+REGRAS MANDATÓRIAS:
+1. NÃO faça infodump. Mantenha os textos enxutos, humanos e prontos para WhatsApp.
+2. Cada uma das 2 opções DEVE TERMINAR OBRIGATORIAMENTE com uma pergunta em DUPLA ALTERNATIVA (either/or).
+3. Retorne ESTRITAMENTE o JSON estruturado com 'options' (contendo a Opção Direta e a Opção Consultiva) e 'goldenTip'.`;
 
     try {
       const ai = getGoogleGenAI();
-      const text = await generateWithFallbackAndTimeout(ai, userPrompt, systemPrompt, 0.7);
-      return res.json({ text });
+      const rawText = await generateWithFallbackAndTimeout(ai, userPrompt, systemPrompt, 0.6);
+      let cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+      }
+
+      const parsed = JSON.parse(cleaned);
+      if (parsed.options && Array.isArray(parsed.options) && parsed.options.length > 0) {
+        return res.json({
+          success: true,
+          options: parsed.options,
+          goldenTip: parsed.goldenTip || "Conduza com uma pergunta por vez.",
+          text: parsed.options[0]?.text || ""
+        });
+      } else {
+        throw new Error("Formato JSON sem 'options' válidas.");
+      }
     } catch (aiError: any) {
-      console.warn("[Merlin Server] Gemini API indisponível, usando fallback inteligente de mensagem:", aiError.message);
-      const emp = clientInterest || "as opções disponíveis";
-      const fallbackText = `Olá, ${clientName}! Tudo bem com você? 👋\n\n` +
-        `Estive analisando algumas condições exclusivas e novidades sobre **${emp}** e lembrei do seu perfil.\n\n` +
-        `Separei detalhes atualizados e simulações especiais. Como está sua disponibilidade para falarmos 2 minutinhos hoje?`;
-      return res.json({ text: fallbackText });
+      console.warn("[Merlin Server] Gemini API indisponível, usando fallback inteligente do Playbook:", aiError.message);
+      const fallback = getPlaybookFallbackOptions(intentId, {
+        name: clientName,
+        empreendimento: clientInterest,
+        notes: clientNotes,
+        brokerName
+      });
+      return res.json({
+        success: true,
+        options: fallback.options,
+        goldenTip: fallback.goldenTip,
+        text: fallback.options[0]?.text || ""
+      });
     }
   } catch (error: any) {
     console.error("Erro ao gerar mensagem:", error);

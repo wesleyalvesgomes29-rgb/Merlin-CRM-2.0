@@ -1,4 +1,5 @@
 import { generateWithFallbackAndTimeout, getCorsHeaders } from "./_utils";
+import { buildPlaybookSystemPrompt, getPlaybookFallbackOptions, PlaybookPillarId } from "../../../src/lib/salesPlaybook";
 
 interface Env {
   GEMINI_API_KEY?: string;
@@ -31,21 +32,18 @@ export async function onRequest(context: {
 
   try {
     const apiKey = env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: "A chave GEMINI_API_KEY não está configurada no ambiente Cloudflare." }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
-    }
-
     const body: any = await request.json();
-    const { clientName, clientInterest, clientNotes, goal, clientStatus, secondBrainSummary } = body;
+    const {
+      clientName,
+      clientInterest,
+      clientNotes,
+      goal,
+      clientStatus,
+      secondBrainSummary,
+      playbookIntent = "primeiro-contato",
+      brokerName = "seu consultor",
+      customInstructions
+    } = body || {};
 
     if (!clientName) {
       return new Response(
@@ -60,9 +58,8 @@ export async function onRequest(context: {
       );
     }
 
-    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho com metodologia humanizada do Second Brain.
-Seu objetivo é criar mensagens de abordagem curtas, humanas, extremamente persuasivas e amigáveis para envio via WhatsApp ou Email.
-Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão genuína. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+    const intentId = (playbookIntent as PlaybookPillarId) || "primeiro-contato";
+    const systemPrompt = buildPlaybookSystemPrompt();
 
     let secondBrainContext = "";
     if (secondBrainSummary && typeof secondBrainSummary === "object") {
@@ -73,27 +70,80 @@ Evite textos excessivamente formais, robóticos, artificiais ou repletos de jarg
   * Critério de Decisão: ${secondBrainSummary.decisionCriteria || "Não especificado"}
   * Ângulo Recomendado: ${secondBrainSummary.recommendedAngle || "Abordagem consultiva"}
   * Nível de Urgência: ${secondBrainSummary.urgencyLevel || "Média"}
-*Diretriz Second Brain*: Use esses pontos comportamentais para criar um gancho natural, tratando as objeções de forma sutil e empática sem parecer vendedor insistente.`;
+*Diretriz Comportamental*: Use estes insights para direcionar a mensagem, eliminando objeções com naturalidade.`;
     }
 
-    const userPrompt = `Crie um script personalizado de abordagem rápida para o seguinte cliente:
+    const userPrompt = `Gere scripts de abordagem comercial para este lead aplicando o Livreto de Scripts Comerciais:
 - Nome do Cliente: ${clientName}
+- Nome do Corretor/Consultor: ${brokerName}
 - Empreendimento de Interesse: ${clientInterest || "Não especificado ainda"}
 - Perfil/Notas do Cliente: ${clientNotes || "Sem observações adicionais"}
 - Etapa atual do Funil: ${clientStatus || "Lead Novo"}
-- Objetivo da mensagem: ${goal || "Fazer um contato inicial para entender as necessidades"}
+- Pilar / Intenção do Playbook: ${intentId}
+- Objetivo Declarado: ${goal || "Conduzir para o próximo passo"}
+${customInstructions ? `- Instrução Adicional do Corretor: ${customInstructions}` : ""}
 ${secondBrainContext}
 
-Instruções Adicionais:
-- Escreva a mensagem em português do Brasil.
-- A mensagem deve parecer escrita manualmente por um corretor de imóveis real (humanizado, amigável).
-- Use o nome do cliente no início de forma natural.
-- Tenha um gancho de chamada para ação claro (Call to Action), convidando para uma resposta simples ou um agendamento rápido de conversa.
-- Retorne APENAS a mensagem pronta, sem introduções ou explicações.`;
+REGRAS MANDATÓRIAS:
+1. NÃO faça infodump. Mantenha os textos enxutos, humanos e prontos para WhatsApp.
+2. Cada uma das 2 opções DEVE TERMINAR OBRIGATORIAMENTE com uma pergunta em DUPLA ALTERNATIVA (either/or).
+3. Retorne ESTRITAMENTE o JSON estruturado com 'options' (contendo a Opção Direta e a Opção Consultiva) e 'goldenTip'.`;
 
-    const text = await generateWithFallbackAndTimeout(apiKey, userPrompt, systemPrompt, 0.7);
+    let responseData: any;
 
-    return new Response(JSON.stringify({ text }), {
+    if (!apiKey) {
+      console.warn("[Cloudflare Pages] GEMINI_API_KEY ausente, acionando fallback estruturado do Playbook.");
+      const fallback = getPlaybookFallbackOptions(intentId, {
+        name: clientName,
+        empreendimento: clientInterest,
+        notes: clientNotes,
+        brokerName
+      });
+      responseData = {
+        success: true,
+        options: fallback.options,
+        goldenTip: fallback.goldenTip,
+        text: fallback.options[0]?.text || ""
+      };
+    } else {
+      try {
+        const rawText = await generateWithFallbackAndTimeout(apiKey, userPrompt, systemPrompt, 0.6);
+        let cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
+        const firstBrace = cleaned.indexOf("{");
+        const lastBrace = cleaned.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace !== -1) {
+          cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+        }
+
+        const parsed = JSON.parse(cleaned);
+        if (parsed.options && Array.isArray(parsed.options) && parsed.options.length > 0) {
+          responseData = {
+            success: true,
+            options: parsed.options,
+            goldenTip: parsed.goldenTip || "Conduza com uma pergunta por vez.",
+            text: parsed.options[0]?.text || ""
+          };
+        } else {
+          throw new Error("Formato JSON sem 'options' válidas.");
+        }
+      } catch (genError: any) {
+        console.warn("[Cloudflare Pages] Falha ao processar com Gemini, usando fallback de alta fidelidade do Playbook:", genError.message);
+        const fallback = getPlaybookFallbackOptions(intentId, {
+          name: clientName,
+          empreendimento: clientInterest,
+          notes: clientNotes,
+          brokerName
+        });
+        responseData = {
+          success: true,
+          options: fallback.options,
+          goldenTip: fallback.goldenTip,
+          text: fallback.options[0]?.text || ""
+        };
+      }
+    }
+
+    return new Response(JSON.stringify(responseData), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
@@ -103,7 +153,7 @@ Instruções Adicionais:
   } catch (error: any) {
     console.error("Erro no Cloudflare Function generate-message:", error);
     return new Response(
-      JSON.stringify({ error: error.message || "Erro interno do servidor ao gerar mensagem com IA." }),
+      JSON.stringify({ error: error.message || "Erro interno ao gerar mensagem." }),
       {
         status: 500,
         headers: {
@@ -114,4 +164,5 @@ Instruções Adicionais:
     );
   }
 }
+
 
