@@ -30,7 +30,7 @@ app.use(express.json());
 // ==========================================
 
 // POST /api/auth/register: Cadastro restrito por código de convite
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password, inviteCode } = req.body || {};
 
@@ -50,7 +50,7 @@ app.post("/api/auth/register", (req, res) => {
       return res.status(400).json({ error: "O Código de Convite é obrigatório para cadastro." });
     }
 
-    const result = registerUser({
+    const result = await registerUser({
       name,
       email,
       password,
@@ -77,7 +77,7 @@ app.post("/api/auth/register", (req, res) => {
 });
 
 // POST /api/auth/login: Autenticação por e-mail e senha
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -85,7 +85,7 @@ app.post("/api/auth/login", (req, res) => {
       return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
     }
 
-    const result = loginUser(email, password);
+    const result = await loginUser(email, password);
 
     if (!result.success || !result.user) {
       return res.status(401).json({ error: result.error || "E-mail ou senha incorretos." });

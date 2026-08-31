@@ -42,18 +42,45 @@ export interface DatabaseSchema {
   };
 }
 
-// Cryptography helpers using native Node.js crypto
+// Cryptography helpers using standard Web Crypto API (crypto.subtle and crypto.getRandomValues)
 export function generateSalt(): string {
-  return crypto.randomBytes(16).toString('hex');
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const passwordBuffer = encoder.encode(password);
+  const saltBuffer = encoder.encode(salt);
+
+  const baseKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    passwordBuffer,
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+
+  const derivedBits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: saltBuffer,
+      iterations: 10000,
+      hash: "SHA-512"
+    },
+    baseKey,
+    512
+  );
+
+  return Array.from(new Uint8Array(derivedBits))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
-export function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
-  const hash = hashPassword(password, salt);
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(expectedHash, 'hex'));
+export async function verifyPassword(password: string, salt: string, expectedHash: string): Promise<boolean> {
+  const hash = await hashPassword(password, salt);
+  return hash === expectedHash;
 }
 
 export function generateRandomCode(prefix = 'MERLIN'): string {
@@ -256,12 +283,12 @@ export function validateInviteCode(code: string): { valid: boolean; isMaster: bo
   return { valid: true, isMaster: false, invite };
 }
 
-export function registerUser(params: {
+export async function registerUser(params: {
   name: string;
   email: string;
   password: string;
   inviteCode: string;
-}): { success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string } {
+}): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string }> {
   const db = readDatabase();
   const emailNorm = params.email.trim().toLowerCase();
 
@@ -278,8 +305,10 @@ export function registerUser(params: {
 
   const now = new Date().toISOString();
   const salt = generateSalt();
-  const passwordHash = hashPassword(params.password, salt);
-  const userId = 'usr_' + crypto.randomBytes(6).toString('hex');
+  const passwordHash = await hashPassword(params.password, salt);
+  const randomBytes = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(randomBytes);
+  const userId = 'usr_' + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
   
   // If master code was used, assign role 'admin', otherwise 'broker'
   const role: 'admin' | 'broker' = inviteCheck.isMaster ? 'admin' : 'broker';
@@ -318,13 +347,13 @@ export function registerUser(params: {
   };
 }
 
-export function loginUser(email: string, password: string): { success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string } {
+export async function loginUser(email: string, password: string): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string }> {
   const user = findUserByEmail(email);
   if (!user) {
     return { success: false, error: 'E-mail ou senha incorretos.' };
   }
 
-  const isValid = verifyPassword(password, user.salt, user.password_hash);
+  const isValid = await verifyPassword(password, user.salt, user.password_hash);
   if (!isValid) {
     return { success: false, error: 'E-mail ou senha incorretos.' };
   }

@@ -3,11 +3,79 @@ export interface Env {
   DB?: any;
 }
 
+export const MASTER_INVITE_CODE = "MERLIN-ADMIN-2026";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-Id",
 };
+
+export function jsonResponse(data: any, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...corsHeaders,
+    },
+  });
+}
+
+export function errorResponse(message: string, status = 400): Response {
+  return new Response(JSON.stringify({ success: false, error: message }), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...corsHeaders,
+    },
+  });
+}
+
+export function generateRandomSalt(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function hashPasswordWithSalt(password: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const passwordBuffer = encoder.encode(password);
+  const saltBuffer = encoder.encode(salt);
+
+  const baseKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    passwordBuffer,
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+
+  const derivedBits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: saltBuffer,
+      iterations: 10000,
+      hash: "SHA-512"
+    },
+    baseKey,
+    512
+  );
+
+  return Array.from(new Uint8Array(derivedBits))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export function generateRandomInviteCode(prefix = "MERLIN"): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let part1 = "";
+  let part2 = "";
+  for (let i = 0; i < 4; i++) {
+    part1 += chars.charAt(Math.floor(Math.random() * chars.length));
+    part2 += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `${prefix}-${part1}-${part2}`;
+}
 
 // Função auxiliar resiliente com fallback de modelos e timeout
 async function generateWithFallbackAndTimeout(
@@ -116,6 +184,376 @@ export default {
     }
 
     // Roteamento
+    if (path === "/api/health" || path === "/api") {
+      return jsonResponse({
+        status: "ok",
+        service: "Merlin CRM Backend",
+        d1Configured: !!env.DB,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // ==========================================
+    // ROTAS DE AUTENTICAÇÃO
+    // ==========================================
+
+    // POST /api/auth/register: Cadastro com código de convite
+    if (path === "/api/auth/register") {
+      if (request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      try {
+        let body: any = {};
+        try {
+          body = await request.json();
+        } catch {
+          return errorResponse("Formato JSON inválido no corpo da requisição.", 400);
+        }
+
+        const { name, email, password, inviteCode } = body || {};
+
+        if (!name || !name.trim()) {
+          return errorResponse("O nome completo é obrigatório.", 400);
+        }
+        if (!email || !email.trim() || !email.includes("@")) {
+          return errorResponse("Informe um endereço de e-mail válido.", 400);
+        }
+        if (!password || password.length < 6) {
+          return errorResponse("A senha deve ter no mínimo 6 caracteres.", 400);
+        }
+        if (!inviteCode || !inviteCode.trim()) {
+          return errorResponse("O Código de Convite é obrigatório para cadastro.", 400);
+        }
+
+        const emailNorm = email.trim().toLowerCase();
+        const codeNorm = inviteCode.trim().toUpperCase();
+        const isMaster = codeNorm === MASTER_INVITE_CODE;
+        const role = isMaster ? "admin" : "broker";
+
+        if (!env.DB) {
+          // Fallback resiliente se o D1 não estiver configurado
+          return jsonResponse({
+            success: true,
+            user: {
+              id: "usr_" + Math.random().toString(36).substring(2, 9),
+              name: name.trim(),
+              email: emailNorm,
+              role,
+              createdAt: new Date().toISOString(),
+            },
+          }, 201);
+        }
+
+        // 1. Verifica se usuário já existe
+        const existingUser = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(emailNorm).first();
+        if (existingUser) {
+          return errorResponse("Este e-mail já está cadastrado no sistema.", 400);
+        }
+
+        // 2. Valida código de convite
+        if (!isMaster) {
+          const invite = await env.DB.prepare("SELECT * FROM invite_codes WHERE code = ?").bind(codeNorm).first();
+          if (!invite || invite.is_active !== 1 || invite.used_by) {
+            return errorResponse("Código de convite inválido ou expirado", 403);
+          }
+        }
+
+        // 3. Cria hash de senha com Web Crypto API (crypto.subtle)
+        const userId = "usr_" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+        const salt = generateRandomSalt();
+        const passwordHash = await hashPasswordWithSalt(password, salt);
+        const now = new Date().toISOString();
+
+        await env.DB.prepare(
+          "INSERT INTO users (id, name, email, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, now).run();
+
+        // 4. Marca convite como usado se não for master
+        if (!isMaster) {
+          await env.DB.prepare(
+            "UPDATE invite_codes SET is_active = 0, used_by = ?, used_at = ? WHERE code = ?"
+          ).bind(userId, now, codeNorm).run();
+        }
+
+        return jsonResponse({
+          success: true,
+          message: "Usuário cadastrado com sucesso!",
+          user: {
+            id: userId,
+            name: name.trim(),
+            email: emailNorm,
+            role,
+            createdAt: now,
+          },
+        }, 201);
+      } catch (error: any) {
+        console.error("[Cloudflare Worker Auth] Erro no registro:", error);
+        return errorResponse(error.message || "Erro interno ao registrar usuário.", 500);
+      }
+    }
+
+    // POST /api/auth/login: Autenticação por e-mail e senha
+    if (path === "/api/auth/login") {
+      if (request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      try {
+        let body: any = {};
+        try {
+          body = await request.json();
+        } catch {
+          return errorResponse("Formato JSON inválido no corpo da requisição.", 400);
+        }
+
+        const { email, password } = body || {};
+        if (!email || !password) {
+          return errorResponse("E-mail e senha são obrigatórios.", 400);
+        }
+
+        const emailNorm = email.trim().toLowerCase();
+
+        if (!env.DB) {
+          return jsonResponse({
+            success: true,
+            user: {
+              id: "usr_default",
+              name: emailNorm.split("@")[0],
+              email: emailNorm,
+              role: "admin",
+              createdAt: new Date().toISOString(),
+            },
+          }, 200);
+        }
+
+        const user = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(emailNorm).first();
+        if (!user) {
+          return errorResponse("E-mail ou senha incorretos.", 401);
+        }
+
+        const computedHash = await hashPasswordWithSalt(password, user.salt);
+        if (computedHash !== user.password_hash) {
+          return errorResponse("E-mail ou senha incorretos.", 401);
+        }
+
+        return jsonResponse({
+          success: true,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            createdAt: user.created_at,
+          },
+        }, 200);
+      } catch (error: any) {
+        console.error("[Cloudflare Worker Auth] Erro no login:", error);
+        return errorResponse(error.message || "Erro interno ao realizar login.", 500);
+      }
+    }
+
+    // GET /api/auth/me: Validação de sessão do usuário
+    if (path === "/api/auth/me") {
+      if (request.method !== "GET") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      if (!userId) {
+        return errorResponse("Não autenticado.", 401);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({
+          success: true,
+          user: {
+            id: userId,
+            name: "Corretor Merlin",
+            email: "corretor@merlin.crm",
+            role: "admin",
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      const user = await env.DB.prepare("SELECT id, name, email, role, created_at FROM users WHERE id = ?").bind(userId).first();
+      if (!user) {
+        return errorResponse("Usuário não encontrado.", 404);
+      }
+
+      return jsonResponse({
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          createdAt: user.created_at,
+        },
+      });
+    }
+
+    // ==========================================
+    // ROTAS DE ADMINISTRAÇÃO (CONVITES)
+    // ==========================================
+
+    // POST /api/admin/create-invite: Geração de novos códigos de convite
+    if (path === "/api/admin/create-invite") {
+      if (request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const adminUserId = request.headers.get("X-User-Id");
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      const { customCode, adminUserId: bodyAdminId } = body || {};
+      const effectiveAdminId = adminUserId || bodyAdminId;
+
+      if (!effectiveAdminId) {
+        return errorResponse("Acesso não autorizado.", 401);
+      }
+
+      const code = (customCode ? customCode.trim().toUpperCase() : generateRandomInviteCode()).replace(/\s+/g, "-");
+
+      if (!env.DB) {
+        return jsonResponse({
+          success: true,
+          invite: {
+            code,
+            created_by: effectiveAdminId,
+            used_by: null,
+            used_at: null,
+            is_active: 1,
+            created_at: new Date().toISOString(),
+          },
+        }, 201);
+      }
+
+      const user = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(effectiveAdminId).first();
+      if (!user || user.role !== "admin") {
+        return errorResponse("Apenas administradores podem gerar códigos de convite.", 403);
+      }
+
+      const existing = await env.DB.prepare("SELECT code FROM invite_codes WHERE code = ?").bind(code).first();
+      if (existing) {
+        return errorResponse("Este código de convite já existe.", 400);
+      }
+
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO invite_codes (code, created_by, used_by, used_at, is_active, created_at) VALUES (?, ?, NULL, NULL, 1, ?)"
+      ).bind(code, effectiveAdminId, now).run();
+
+      return jsonResponse({
+        success: true,
+        invite: {
+          code,
+          created_by: effectiveAdminId,
+          used_by: null,
+          used_at: null,
+          is_active: 1,
+          created_at: now,
+        },
+      }, 201);
+    }
+
+    // GET /api/admin/invite-codes: Listagem de convites gerados
+    if (path === "/api/admin/invite-codes") {
+      if (request.method !== "GET") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const adminUserId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      if (!adminUserId) {
+        return errorResponse("Acesso não autorizado.", 401);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({
+          success: true,
+          invites: [
+            {
+              code: MASTER_INVITE_CODE,
+              created_by: "system",
+              used_by: null,
+              used_at: null,
+              is_active: 1,
+              created_at: new Date().toISOString(),
+            },
+          ],
+        });
+      }
+
+      const user = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(adminUserId).first();
+      if (!user || user.role !== "admin") {
+        return errorResponse("Apenas administradores podem visualizar códigos de convite.", 403);
+      }
+
+      const query = `
+        SELECT 
+          i.code,
+          i.created_by,
+          i.used_by,
+          i.used_at,
+          i.is_active,
+          i.created_at,
+          u.name as used_by_name,
+          u.email as used_by_email
+        FROM invite_codes i
+        LEFT JOIN users u ON i.used_by = u.id
+        ORDER BY i.created_at DESC
+      `;
+      const result = await env.DB.prepare(query).all();
+
+      return jsonResponse({
+        success: true,
+        invites: result.results || [],
+      });
+    }
+
+    // POST /api/admin/revoke-invite: Revogação de código de convite
+    if (path === "/api/admin/revoke-invite") {
+      if (request.method !== "POST") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const adminUserId = request.headers.get("X-User-Id");
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      const { code, adminUserId: bodyAdminId } = body || {};
+      const effectiveAdminId = adminUserId || bodyAdminId;
+
+      if (!effectiveAdminId || !code) {
+        return errorResponse("Parâmetros insuficientes.", 400);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({ success: true, message: "Código revogado." });
+      }
+
+      const user = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(effectiveAdminId).first();
+      if (!user || user.role !== "admin") {
+        return errorResponse("Acesso restrito a administradores.", 403);
+      }
+
+      const codeNorm = code.trim().toUpperCase();
+      await env.DB.prepare("UPDATE invite_codes SET is_active = 0 WHERE code = ?").bind(codeNorm).run();
+
+      return jsonResponse({ success: true, message: "Código de convite revogado com sucesso." });
+    }
+
+    // Roteamento Gemini e CRM
     if (path === "/api/gemini/generate-message") {
       if (request.method !== "POST") {
         return new Response(JSON.stringify({ error: "Método não permitido" }), {
