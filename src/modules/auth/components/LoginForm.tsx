@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { 
-  Sparkles, 
   Mail, 
   Lock, 
   User as UserIcon, 
@@ -13,6 +12,7 @@ import {
   Info
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import merlinLogo from '../../../assets/images/merlin_logo_transparent.png';
 
 export const LoginForm: React.FC = () => {
   const { login, register, isLoading, error, clearError } = useAuth();
@@ -61,9 +61,14 @@ export const LoginForm: React.FC = () => {
         <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-[#FF7A00]/5 rounded-full blur-3xl pointer-events-none" />
 
         {/* Logo and Header */}
-        <div className="text-center space-y-3 relative z-10">
-          <div className="inline-flex items-center justify-center p-3 bg-[#FF7A00]/10 border border-[#FF7A00]/20 rounded-2xl mb-1 shadow-inner">
-            <Sparkles className="h-7 w-7 text-[#FF7A00] animate-pulse" />
+        <div className="text-center space-y-2 relative z-10">
+          <div className="flex items-center justify-center mb-1">
+            <img
+              src={merlinLogo}
+              alt="Merlin CRM"
+              className="h-12 sm:h-14 w-auto max-w-[220px] object-contain select-none filter drop-shadow-sm"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
             Merlin CRM

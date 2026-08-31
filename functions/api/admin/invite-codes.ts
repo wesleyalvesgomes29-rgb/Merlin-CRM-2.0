@@ -1,38 +1,31 @@
-import { getAuthCorsHeaders } from "../auth/_auth_utils";
+import { 
+  getAuthCorsHeaders, 
+  jsonResponse, 
+  errorResponse,
+  Env,
+  PagesFunction
+} from "../auth/_auth_utils";
 
-interface Env {
-  DB?: any;
-}
+export const onRequestOptions: PagesFunction<Env> = async (context) => {
+  const corsHeaders = getAuthCorsHeaders(context.request);
+  return new Response(null, { status: 204, headers: corsHeaders });
+};
 
-export async function onRequest(context: { request: Request; env: Env }) {
+export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
   const corsHeaders = getAuthCorsHeaders(request);
-
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
-  }
-
-  if (request.method !== "GET") {
-    return new Response(JSON.stringify({ error: "Método não permitido" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json", ...corsHeaders }
-    });
-  }
 
   try {
     const url = new URL(request.url);
     const adminUserId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
 
     if (!adminUserId) {
-      return new Response(JSON.stringify({ error: "Acesso não autorizado." }), {
-        status: 401,
-        headers: { "Content-Type": "application/json", ...corsHeaders }
-      });
+      return errorResponse("Acesso não autorizado.", 401, corsHeaders);
     }
 
     if (!env.DB) {
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           success: true,
           invites: [
             {
@@ -41,20 +34,18 @@ export async function onRequest(context: { request: Request; env: Env }) {
               used_by: null,
               used_at: null,
               is_active: 1,
-              created_at: new Date().toISOString()
-            }
-          ]
-        }),
-        { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+              created_at: new Date().toISOString(),
+            },
+          ],
+        },
+        200,
+        corsHeaders
       );
     }
 
-    const user = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(adminUserId).first();
+    const user = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(adminUserId).first<any>();
     if (!user || user.role !== "admin") {
-      return new Response(JSON.stringify({ error: "Apenas administradores podem visualizar convites." }), {
-        status: 403,
-        headers: { "Content-Type": "application/json", ...corsHeaders }
-      });
+      return errorResponse("Apenas administradores podem visualizar convites.", 403, corsHeaders);
     }
 
     const query = `
@@ -73,18 +64,28 @@ export async function onRequest(context: { request: Request; env: Env }) {
     `;
     const result = await env.DB.prepare(query).all();
 
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         success: true,
-        invites: result.results || []
-      }),
-      { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        invites: result.results || [],
+      },
+      200,
+      corsHeaders
     );
   } catch (error: any) {
     console.error("[Cloudflare D1 Admin] Erro ao listar convites:", error);
-    return new Response(JSON.stringify({ error: error.message || "Erro ao consultar convites." }), {
-      status: 500,
-      headers: { "Content-Type": "application/json", ...corsHeaders }
-    });
+    return errorResponse(error.message || "Erro ao consultar convites.", 500, corsHeaders);
   }
-}
+};
+
+export const onRequest: PagesFunction<Env> = async (context) => {
+  if (context.request.method === "OPTIONS") {
+    return onRequestOptions(context);
+  }
+  if (context.request.method === "GET") {
+    return onRequestGet(context);
+  }
+  const corsHeaders = getAuthCorsHeaders(context.request);
+  return errorResponse("Método não permitido", 405, corsHeaders);
+};
+

@@ -1,5 +1,45 @@
 import { LoginCredentials, RegisterCredentials, User, InviteCode } from '../types';
 
+/**
+ * Utilitário seguro para processar respostas da API, prevenindo erros de parse JSON
+ * caso o servidor retorne páginas de erro 404/500 em texto plano ou HTML.
+ */
+async function parseApiResponse<T = any>(response: Response, fallbackErrorMessage: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = null;
+
+  if (contentType.includes('application/json')) {
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+  } else {
+    // Tratamento defensivo para respostas que não são JSON (ex: 404 Not Found, 500)
+    const rawText = await response.text().catch(() => '');
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Serviço de autenticação temporariamente indisponível (404 Not Found).');
+      }
+      if (response.status >= 500) {
+        throw new Error('Instabilidade temporária no servidor (500). Tente novamente em instantes.');
+      }
+      throw new Error(rawText.trim() || fallbackErrorMessage);
+    }
+  }
+
+  if (!response.ok) {
+    const errorMsg = data?.error || data?.message || fallbackErrorMessage;
+    throw new Error(errorMsg);
+  }
+
+  if (data && data.success === false) {
+    throw new Error(data.error || data.message || fallbackErrorMessage);
+  }
+
+  return (data || {}) as T;
+}
+
 export const authService = {
   /**
    * Autentica o usuário via backend ou Cloudflare Pages D1
@@ -24,13 +64,12 @@ export const authService = {
       }),
     });
 
-    const data = await response.json();
+    const data = await parseApiResponse<{ success: boolean; user: User; error?: string }>(
+      response,
+      'E-mail ou senha incorretos.'
+    );
 
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'E-mail ou senha incorretos.');
-    }
-
-    return data.user as User;
+    return data.user;
   },
 
   /**
@@ -70,16 +109,18 @@ export const authService = {
       }),
     });
 
-    const data = await response.json();
-
-    if (!response.ok || !data.success) {
-      if (response.status === 403 || data.error?.includes('convite')) {
+    try {
+      const data = await parseApiResponse<{ success: boolean; user: User; error?: string }>(
+        response,
+        'Falha ao realizar cadastro.'
+      );
+      return data.user;
+    } catch (err: any) {
+      if (response.status === 403 || err.message?.includes('convite')) {
         throw new Error('Código de convite inválido ou expirado. Verifique com seu administrador.');
       }
-      throw new Error(data.error || 'Falha ao realizar cadastro.');
+      throw err;
     }
-
-    return data.user as User;
   },
 
   /**
@@ -93,8 +134,11 @@ export const authService = {
         },
       });
       if (!response.ok) return null;
-      const data = await response.json();
-      return data.success ? data.user : null;
+      const data = await parseApiResponse<{ success: boolean; user: User }>(
+        response,
+        'Sessão expirada.'
+      );
+      return data?.user || null;
     } catch {
       return null;
     }
@@ -116,12 +160,12 @@ export const authService = {
       }),
     });
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Erro ao gerar código de convite.');
-    }
+    const data = await parseApiResponse<{ success: boolean; invite: InviteCode; error?: string }>(
+      response,
+      'Erro ao gerar código de convite.'
+    );
 
-    return data.invite as InviteCode;
+    return data.invite;
   },
 
   /**
@@ -134,12 +178,12 @@ export const authService = {
       },
     });
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Erro ao consultar códigos de convite.');
-    }
+    const data = await parseApiResponse<{ success: boolean; invites: InviteCode[]; error?: string }>(
+      response,
+      'Erro ao consultar códigos de convite.'
+    );
 
-    return data.invites as InviteCode[];
+    return data.invites || [];
   },
 
   /**
@@ -158,10 +202,10 @@ export const authService = {
       }),
     });
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Erro ao revogar código de convite.');
-    }
+    await parseApiResponse<{ success: boolean; message?: string; error?: string }>(
+      response,
+      'Erro ao revogar código de convite.'
+    );
   },
 
   async logout(): Promise<void> {
@@ -169,3 +213,4 @@ export const authService = {
     await new Promise((resolve) => setTimeout(resolve, 50));
   },
 };
+

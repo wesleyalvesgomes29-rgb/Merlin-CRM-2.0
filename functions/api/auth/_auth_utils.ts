@@ -1,11 +1,53 @@
 export const MASTER_INVITE_CODE = "MERLIN-ADMIN-2026";
 
+// Cloudflare D1 and Pages Function Types
+export interface D1Result<T = any> {
+  results?: T[];
+  success?: boolean;
+  meta?: any;
+  error?: string;
+}
+
+export interface D1PreparedStatement {
+  bind(...values: any[]): D1PreparedStatement;
+  first<T = any>(colName?: string): Promise<T | null>;
+  run(): Promise<D1Result>;
+  all<T = any>(): Promise<D1Result<T>>;
+  raw<T = any>(): Promise<T[]>;
+}
+
+export interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  dump(): Promise<ArrayBuffer>;
+  batch<T = any>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  exec(query: string): Promise<D1Result>;
+}
+
+export interface Env {
+  DB?: D1Database;
+  GEMINI_API_KEY?: string;
+  [key: string]: any;
+}
+
+export type EventContext<TEnv = Env, TParams = Record<string, string | string[]>, TData = Record<string, unknown>> = {
+  request: Request;
+  env: TEnv;
+  params?: TParams;
+  waitUntil?: (promise: Promise<any>) => void;
+  next?: (input?: Request | string, init?: RequestInit) => Promise<Response>;
+  data?: TData;
+};
+
+export type PagesFunction<TEnv = Env> = (
+  context: EventContext<TEnv>
+) => Response | Promise<Response>;
+
 export function getAuthCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin");
   const host = request.headers.get("Host");
 
   const headers: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-Id",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
@@ -23,12 +65,34 @@ export function getAuthCorsHeaders(request: Request): Record<string, string> {
 
     if (isLocalhost || isCloudflarePages || isCloudRun || isSameHost) {
       headers["Access-Control-Allow-Origin"] = origin;
+    } else {
+      headers["Access-Control-Allow-Origin"] = "*";
     }
   } catch {
-    // ignore
+    headers["Access-Control-Allow-Origin"] = "*";
   }
 
   return headers;
+}
+
+export function jsonResponse(data: any, status = 200, corsHeaders: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...corsHeaders,
+    },
+  });
+}
+
+export function errorResponse(message: string, status = 400, corsHeaders: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify({ success: false, error: message }), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...corsHeaders,
+    },
+  });
 }
 
 export function generateRandomSalt(): string {
@@ -76,3 +140,4 @@ export function generateRandomInviteCode(prefix = "MERLIN"): string {
   }
   return `${prefix}-${part1}-${part2}`;
 }
+
