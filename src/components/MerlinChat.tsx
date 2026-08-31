@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Client, Sale, Task } from '../types';
 import { EngineResult } from '../modules/rulesEngine/types';
+import { openGoogleCalendarEvent } from '../lib/calendarUtils';
 import { 
   Send, 
   Sparkles, 
@@ -23,7 +24,9 @@ import {
   CheckSquare,
   CheckCircle2,
   Trash2,
-  ArrowRight
+  ArrowRight,
+  CalendarPlus,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -80,6 +83,7 @@ export default function MerlinChat({
   const [showMemory, setShowMemory] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState<BrokerMemoryEntry[]>([]);
   const [learnedProfile, setLearnedProfile] = useState<BrokerLearnedProfile | null>(null);
+  const [calendarToast, setCalendarToast] = useState<string | null>(null);
 
   // Reactive listener for loading Memory and Perfil Aprendido
   useEffect(() => {
@@ -201,6 +205,19 @@ export default function MerlinChat({
           }
           window.dispatchEvent(new CustomEvent('merlin_create_task', { detail: taskData }));
           addBrokerMemoryEntry('task_created', `Merlin criou a tarefa "${taskData.notes}" para ${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''}`, taskData.clientId, taskData.clientName);
+
+          // Sincronização automática gratuita com o Google Agenda
+          openGoogleCalendarEvent({
+            title: taskData.notes || `${taskData.actionType} - ${taskData.clientName || 'Cliente'}`,
+            notes: `Tarefa: ${taskData.notes || taskData.actionType}\nLead: ${taskData.clientName || 'N/A'}\nPrioridade: ${taskData.priority}`,
+            dueDate: taskData.dueDate,
+            dueTime: taskData.dueTime
+          });
+
+          setCalendarToast('✅ Tarefa agendada no Merlin CRM e sincronizada com o Google Agenda!');
+          setTimeout(() => {
+            setCalendarToast(null);
+          }, 6000);
         } else if (actionPayload.type === 'reschedule_task' && actionPayload.taskId) {
           const existing = tasks.find(t => t.id === actionPayload.taskId);
           if (existing) {
@@ -546,6 +563,29 @@ export default function MerlinChat({
         <>
           {/* Messages Log area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-[#222222] scrollbar-track-transparent">
+            {/* Realtime Calendar Notification Banner */}
+            <AnimatePresence>
+              {calendarToast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                  className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 p-3 rounded-2xl flex items-center justify-between text-xs font-semibold shadow-lg shadow-emerald-500/10 mb-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <CalendarPlus className="h-4 w-4 text-[#34D399] shrink-0" />
+                    <span>{calendarToast}</span>
+                  </div>
+                  <button 
+                    onClick={() => setCalendarToast(null)} 
+                    className="text-emerald-400 hover:text-white cursor-pointer ml-2"
+                  >
+                    ✕
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <AnimatePresence initial={false}>
               {messages.map((msg) => {
                 const isUser = msg.sender === 'user';
@@ -614,6 +654,23 @@ export default function MerlinChat({
                                 <span className="bg-[#FF7A00]/10 text-[#FF7A00] px-2 py-0.5 rounded-md text-[9px] font-bold border border-[#FF7A00]/25">
                                   {msg.action.task.actionType}
                                 </span>
+                              </div>
+
+                              <div className="pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openGoogleCalendarEvent({
+                                    title: msg.action.task.notes || `${msg.action.task.actionType} - ${msg.action.task.clientName || 'Cliente'}`,
+                                    notes: `Tarefa: ${msg.action.task.notes || msg.action.task.actionType}\nLead: ${msg.action.task.clientName || 'N/A'}\nPrioridade: ${msg.action.task.priority}`,
+                                    dueDate: msg.action.task.dueDate,
+                                    dueTime: msg.action.task.dueTime
+                                  })}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 text-[11px] font-bold transition-all cursor-pointer hover:border-blue-400"
+                                >
+                                  <CalendarPlus className="h-3.5 w-3.5" />
+                                  <span>Abrir no Google Agenda</span>
+                                  <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                                </button>
                               </div>
                             </div>
                           )}

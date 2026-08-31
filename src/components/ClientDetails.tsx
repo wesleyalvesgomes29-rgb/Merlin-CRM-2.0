@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Client, Tag, ClientStatus, CommentEntry, Task } from '../types';
 import { getClientAlerts, getDaysSinceContact, getStoredTasks, saveStoredTasks, getLocalTodayStr, formatDateBRL } from '../lib/storage';
 import { generateTaskId, generateHistoryId } from '../lib/idUtils';
+import { openGoogleCalendarEvent } from '../lib/calendarUtils';
 import { 
   X, 
   Phone, 
@@ -22,7 +23,8 @@ import {
   CheckCircle2,
   ExternalLink,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  CalendarPlus
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import DocumentsTab from '../modules/documents/components/DocumentsTab';
@@ -125,6 +127,14 @@ export default function ClientDetails({
       saveStoredTasks(updated);
       setClientTasks(updated.filter(t => t.clientId === client.id));
     }
+
+    // Auto open Google Calendar
+    openGoogleCalendarEvent({
+      title: taskNotes || `${taskActionType} - ${client.name}`,
+      notes: `Tarefa: ${taskNotes || taskActionType}\nLead: ${client.name}\nPrioridade: ${taskPriority}\nTelefone: ${client.phone}`,
+      dueDate: taskDueDate,
+      dueTime: taskDueTime || undefined
+    });
 
     setIsAddingTask(false);
     setTaskNotes('');
@@ -949,13 +959,27 @@ export default function ClientDetails({
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => onDeleteTask?.(t.id)}
-                        className="p-1 text-slate-400 hover:text-[#FB7185] rounded-lg transition-colors cursor-pointer"
-                        title="Excluir"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openGoogleCalendarEvent({
+                            title: t.notes || `${t.actionType} - ${client.name}`,
+                            notes: `Tarefa: ${t.notes || t.actionType}\nLead: ${client.name}\nPrioridade: ${t.priority}\nTelefone: ${client.phone}`,
+                            dueDate: t.dueDate,
+                            dueTime: t.dueTime
+                          })}
+                          className="p-1.5 text-blue-500 hover:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors cursor-pointer"
+                          title="Abrir no Google Agenda"
+                        >
+                          <CalendarPlus className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => onDeleteTask?.(t.id)}
+                          className="p-1.5 text-slate-400 hover:text-[#FB7185] hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                          title="Excluir"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}

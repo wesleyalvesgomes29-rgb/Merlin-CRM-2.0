@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Task, Client } from '../types';
+import { openGoogleCalendarEvent } from '../lib/calendarUtils';
 import { 
   CheckSquare, 
   Square, 
@@ -29,7 +30,11 @@ import {
   Printer,
   Sparkles,
   Check,
-  ChevronDown
+  ChevronDown,
+  CalendarPlus,
+  Send,
+  Loader2,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -82,6 +87,215 @@ export default function MyRoutine({
   const [priority, setPriority] = useState<'Alta' | 'Média' | 'Baixa'>('Média');
   const [notes, setNotes] = useState('');
   const [syncNextContact, setSyncNextContact] = useState(true);
+  const [syncGoogleCalendarOnCreate, setSyncGoogleCalendarOnCreate] = useState(true);
+
+  // Smart Task Prompt state
+  const [smartPrompt, setSmartPrompt] = useState('');
+  const [isCreatingWithAI, setIsCreatingWithAI] = useState(false);
+  const [smartPromptFeedback, setSmartPromptFeedback] = useState<string | null>(null);
+  const [autoOpenCalendar, setAutoOpenCalendar] = useState(true);
+
+  // Natural Language Task Parser (Client-side fallback & instant engine)
+  const parseNaturalLanguageTask = (query: string): {
+    clientName?: string;
+    clientId?: string;
+    actionType: string;
+    dueDate: string;
+    dueTime?: string;
+    priority: 'Alta' | 'Média' | 'Baixa';
+    notes: string;
+  } => {
+    const lower = query.toLowerCase();
+    const today = new Date();
+    let targetDate = new Date();
+
+    if (lower.includes('depois de amanhã') || lower.includes('depois de amanha')) {
+      targetDate.setDate(today.getDate() + 2);
+    } else if (lower.includes('amanhã') || lower.includes('amanha')) {
+      targetDate.setDate(today.getDate() + 1);
+    } else if (lower.includes('hoje')) {
+      // today
+    } else {
+      const weekdays: { [key: string]: number } = {
+        'domingo': 0,
+        'segunda': 1,
+        'terça': 2,
+        'terca': 2,
+        'quarta': 3,
+        'quinta': 4,
+        'sexta': 5,
+        'sábado': 6,
+        'sabado': 6
+      };
+
+      for (const [dayName, dayIndex] of Object.entries(weekdays)) {
+        if (lower.includes(dayName)) {
+          const currentDay = today.getDay();
+          let diff = dayIndex - currentDay;
+          if (diff <= 0) diff += 7;
+          targetDate.setDate(today.getDate() + diff);
+          break;
+        }
+      }
+    }
+
+    // Check explicit DD/MM
+    const dateMatch = lower.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    if (dateMatch) {
+      const day = parseInt(dateMatch[1], 10);
+      const month = parseInt(dateMatch[2], 10) - 1;
+      const year = dateMatch[3] ? parseInt(dateMatch[3], 10) : today.getFullYear();
+      targetDate = new Date(year, month, day);
+    }
+
+    const y = targetDate.getFullYear();
+    const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const d = String(targetDate.getDate()).padStart(2, '0');
+    const computedDueDate = `${y}-${m}-${d}`;
+
+    // Extract time (ex: "15h", "15:30", "15h30", "às 14:00")
+    let computedDueTime: string | undefined = undefined;
+    const timeMatch = lower.match(/(?:às|as)?\s*(\d{1,2})(?:[:h](\d{2})|h)?(?:\s*(?:min|m))?\b/);
+    if (timeMatch && timeMatch[1]) {
+      const hour = parseInt(timeMatch[1], 10);
+      if (hour >= 0 && hour <= 23) {
+        const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        computedDueTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      }
+    }
+
+    // Action Type
+    let computedActionType = 'Outro';
+    if (lower.includes('whats') || lower.includes('zap') || lower.includes('mensagem')) {
+      computedActionType = 'WhatsApp';
+    } else if (lower.includes('ligar') || lower.includes('ligação') || lower.includes('ligacao') || lower.includes('telefonar') || lower.includes('retrabalho')) {
+      computedActionType = 'Ligação';
+    } else if (lower.includes('visita') || lower.includes('decorado') || lower.includes('plantão') || lower.includes('plantao')) {
+      computedActionType = 'Visita ao Imóvel';
+    } else if (lower.includes('proposta') || lower.includes('simulação') || lower.includes('simulacao')) {
+      computedActionType = 'Enviar Proposta';
+    } else if (lower.includes('reunião') || lower.includes('reuniao') || lower.includes('alinhamento')) {
+      computedActionType = 'Reunião';
+    } else if (lower.includes('contrato') || lower.includes('escritura') || lower.includes('documento') || lower.includes('docs')) {
+      computedActionType = 'Contrato / Docs';
+    }
+
+    // Match client
+    let matchedClient: Client | undefined = undefined;
+    for (const c of clients) {
+      const first = c.name.split(' ')[0].toLowerCase();
+      if (first.length > 2 && lower.includes(first)) {
+        matchedClient = c;
+        break;
+      }
+    }
+
+    // Priority
+    let computedPriority: 'Alta' | 'Média' | 'Baixa' = 'Média';
+    if (lower.includes('urgente') || lower.includes('alta') || lower.includes('importante') || lower.includes('crítico') || lower.includes('critico')) {
+      computedPriority = 'Alta';
+    } else if (lower.includes('baixa') || lower.includes('tranquilo')) {
+      computedPriority = 'Baixa';
+    }
+
+    return {
+      clientId: matchedClient?.id,
+      clientName: matchedClient?.name,
+      actionType: computedActionType,
+      dueDate: computedDueDate,
+      dueTime: computedDueTime,
+      priority: computedPriority,
+      notes: query.trim()
+    };
+  };
+
+  // Smart Task Submission
+  const handleSmartCreateTask = async (customPrompt?: string) => {
+    const query = (customPrompt || smartPrompt).trim();
+    if (!query) return;
+
+    setIsCreatingWithAI(true);
+    setSmartPromptFeedback(null);
+
+    try {
+      let parsedTask: {
+        clientName?: string;
+        clientId?: string;
+        actionType: string;
+        dueDate: string;
+        dueTime?: string;
+        priority: 'Alta' | 'Média' | 'Baixa';
+        notes: string;
+      } | null = null;
+
+      try {
+        const response = await fetch('/api/gemini/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `O corretor deseja agendar esta tarefa através do prompt inteligente: "${query}". Crie a tarefa com action type 'create_task'.`,
+            clients: clients.map(c => ({ id: c.id, name: c.name, status: c.status })),
+            tasks: tasks.slice(0, 10)
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.action && data.action.type === 'create_task' && data.action.task) {
+            const t = data.action.task;
+            parsedTask = {
+              clientId: t.clientId || undefined,
+              clientName: t.clientName || undefined,
+              actionType: t.actionType || 'Outro',
+              dueDate: t.dueDate || new Date().toISOString().split('T')[0],
+              dueTime: t.dueTime || undefined,
+              priority: t.priority || 'Média',
+              notes: t.notes || query
+            };
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[SmartTask] AI backend unavailable, using local parser:', apiErr);
+      }
+
+      if (!parsedTask) {
+        parsedTask = parseNaturalLanguageTask(query);
+      }
+
+      const taskData = {
+        clientId: parsedTask.clientId,
+        clientName: parsedTask.clientName,
+        actionType: parsedTask.actionType,
+        dueDate: parsedTask.dueDate,
+        dueTime: parsedTask.dueTime,
+        priority: parsedTask.priority,
+        notes: parsedTask.notes,
+        completed: false
+      };
+
+      onAddTask(taskData);
+
+      if (autoOpenCalendar) {
+        openGoogleCalendarEvent({
+          title: taskData.notes || `${taskData.actionType} - ${taskData.clientName || 'Cliente'}`,
+          notes: `Tarefa: ${taskData.notes}\nLead: ${taskData.clientName || 'N/A'}\nPrioridade: ${taskData.priority}`,
+          dueDate: taskData.dueDate,
+          dueTime: taskData.dueTime
+        });
+      }
+
+      setSmartPrompt('');
+      setSmartPromptFeedback(`✅ Tarefa agendada com sucesso para ${taskData.dueDate}${taskData.dueTime ? ' às ' + taskData.dueTime : ''} e sincronizada com o Google Agenda!`);
+      setTimeout(() => {
+        setSmartPromptFeedback(null);
+      }, 7000);
+    } catch (error: any) {
+      console.error('Error creating smart task:', error);
+      setSmartPromptFeedback('Erro ao criar tarefa. Tente novamente.');
+    } finally {
+      setIsCreatingWithAI(false);
+    }
+  };
 
   // Today Date string formatted
   const todayStr = useMemo(() => {
@@ -236,6 +450,16 @@ export default function MyRoutine({
       onUpdateClient({
         ...linkedClient,
         nextContactDate: nextDateTime
+      });
+    }
+
+    // Optionally open Google Calendar event template
+    if (syncGoogleCalendarOnCreate) {
+      openGoogleCalendarEvent({
+        title: notes || `${actionType} - ${linkedClient?.name || 'Cliente'}`,
+        notes: `Tarefa: ${notes || actionType}\nLead: ${linkedClient?.name || 'N/A'}\nPrioridade: ${priority}`,
+        dueDate,
+        dueTime: dueTime || undefined
       });
     }
 
@@ -457,27 +681,44 @@ export default function MyRoutine({
               <span className="text-[10px] text-slate-400 dark:text-[#888888] italic">Tarefa Avulsa</span>
             )}
 
-            {/* Direct Action Buttons (WhatsApp, Call) */}
-            {task.clientId && linkedClient?.phone && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => handleOpenWhatsApp(task)}
-                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-[#34D399] hover:bg-emerald-500/20 border border-emerald-500/20 transition-all cursor-pointer"
-                  title="Abrir WhatsApp com mensagem rápida"
-                >
-                  <MessageSquare className="h-3 w-3" />
-                  <span>Whats</span>
-                </button>
-                <button
-                  onClick={() => handleCall(task)}
-                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-[#FD7A00]/10 text-[#FD7A00] hover:bg-[#FD7A00]/20 border border-[#FD7A00]/20 transition-all cursor-pointer"
-                  title="Ligar agora"
-                >
-                  <Phone className="h-3 w-3" />
-                  <span>Ligar</span>
-                </button>
-              </div>
-            )}
+            {/* Direct Action Buttons (WhatsApp, Call, Google Agenda) */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {task.clientId && linkedClient?.phone && (
+                <>
+                  <button
+                    onClick={() => handleOpenWhatsApp(task)}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-[#34D399] hover:bg-emerald-500/20 border border-emerald-500/20 transition-all cursor-pointer"
+                    title="Abrir WhatsApp com mensagem rápida"
+                  >
+                    <MessageSquare className="h-3 w-3" />
+                    <span>Whats</span>
+                  </button>
+                  <button
+                    onClick={() => handleCall(task)}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-[#FD7A00]/10 text-[#FD7A00] hover:bg-[#FD7A00]/20 border border-[#FD7A00]/20 transition-all cursor-pointer"
+                    title="Ligar agora"
+                  >
+                    <Phone className="h-3 w-3" />
+                    <span>Ligar</span>
+                  </button>
+                </>
+              )}
+
+              {/* Google Agenda Shortcut Button */}
+              <button
+                onClick={() => openGoogleCalendarEvent({
+                  title: task.notes || `${task.actionType} - ${task.clientName || 'Cliente'}`,
+                  notes: `Tarefa: ${task.notes || task.actionType}\nLead: ${task.clientName || 'N/A'}\nPrioridade: ${task.priority}`,
+                  dueDate: task.dueDate,
+                  dueTime: task.dueTime
+                })}
+                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 transition-all cursor-pointer"
+                title="Abrir no Google Agenda (100% gratuito)"
+              >
+                <CalendarPlus className="h-3 w-3" />
+                <span>Google Agenda</span>
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -584,6 +825,127 @@ export default function MyRoutine({
             <span>Nova Tarefa</span>
           </button>
         </div>
+      </div>
+
+      {/* 1.5. SMART TASK PROMPT (IA + GOOGLE AGENDA) */}
+      <div className="bg-gradient-to-r from-[#161616] via-[#1a1815] to-[#161616] border border-[#FD7A00]/30 rounded-3xl p-5 shadow-lg shadow-[#FD7A00]/5 space-y-3.5 relative overflow-hidden" id="smart-task-prompt-box">
+        {/* Glow accent */}
+        <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-[#FD7A00]/10 to-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 relative z-10">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-gradient-to-br from-[#FD7A00]/20 to-blue-500/20 text-[#FD7A00] border border-[#FD7A00]/30">
+              <Sparkles className="h-4 w-4 text-[#FD7A00] animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>Prompt de Tarefa Inteligente</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center gap-1">
+                  <CalendarPlus className="h-3 w-3" />
+                  Google Agenda
+                </span>
+              </h3>
+              <p className="text-xs text-[#888888]">
+                Digite em linguagem natural (ex: <em>"fazer retrabalho na terça-feira às 15h com João"</em>) para agendar no CRM e abrir no Google Agenda.
+              </p>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-xs text-[#BDBDBD] cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={autoOpenCalendar}
+              onChange={(e) => setAutoOpenCalendar(e.target.checked)}
+              className="rounded border-[#303030] text-blue-500 focus:ring-blue-500 bg-[#0B0B0B]"
+            />
+            <span className="text-[11px]">Abrir Google Agenda ao criar</span>
+          </label>
+        </div>
+
+        {/* Input Form */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSmartCreateTask();
+          }}
+          className="flex flex-col sm:flex-row gap-2 relative z-10"
+        >
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={smartPrompt}
+              onChange={(e) => setSmartPrompt(e.target.value)}
+              placeholder="Digite sua tarefa com data e hora (ex: Visita no decorado com Maria sábado às 10:00)..."
+              disabled={isCreatingWithAI}
+              className="w-full bg-[#0B0B0B] border border-[#303030] focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00] text-white placeholder-[#666666] text-xs sm:text-sm rounded-2xl px-4 py-3 outline-none transition-all disabled:opacity-50"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isCreatingWithAI || !smartPrompt.trim()}
+            className="bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] text-[#0B0B0B] font-bold px-5 py-3 rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shadow-[#FD7A00]/20 active:scale-95 transition-all cursor-pointer hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {isCreatingWithAI ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-[#0B0B0B]" />
+                <span>Agendando...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="h-4 w-4" />
+                <span>Criar com IA &amp; Agenda</span>
+              </>
+            )}
+          </button>
+        </form>
+
+        {/* Quick Suggestion Pills */}
+        <div className="flex items-center gap-2 flex-wrap text-[11px] text-[#888888] relative z-10 pt-1">
+          <span className="font-semibold text-slate-400">Sugestões rápidas:</span>
+          {[
+            'Fazer 20 retrabalhos na terça às 15:00',
+            'Ligar para lead amanhã às 10:00',
+            'Visita no decorado com João sábado às 10:30',
+            'Enviar proposta hoje às 17:00'
+          ].map((pill, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => {
+                setSmartPrompt(pill);
+                handleSmartCreateTask(pill);
+              }}
+              className="px-2.5 py-1 rounded-xl bg-[#0B0B0B] hover:bg-[#222222] text-[#CCCCCC] hover:text-white border border-[#2A2A2A] hover:border-[#FD7A00]/40 transition-all cursor-pointer text-[10px] font-medium"
+            >
+              ⚡ {pill}
+            </button>
+          ))}
+        </div>
+
+        {/* Feedback / Toast */}
+        <AnimatePresence>
+          {smartPromptFeedback && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 p-3 rounded-2xl flex items-center justify-between text-xs font-semibold"
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#34D399] shrink-0" />
+                <span>{smartPromptFeedback}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSmartPromptFeedback(null)}
+                className="text-emerald-400 hover:text-white cursor-pointer ml-2"
+              >
+                ✕
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 2. Top Summary Metric Cards */}
@@ -1020,18 +1382,33 @@ export default function MyRoutine({
                   />
                 </div>
 
-                {/* Sync Option */}
-                {clientId && (
-                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-[#E5E5E5] cursor-pointer pt-1">
+                {/* Sync Options */}
+                <div className="space-y-1.5 pt-1">
+                  {clientId && (
+                    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-[#E5E5E5] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={syncNextContact}
+                        onChange={(e) => setSyncNextContact(e.target.checked)}
+                        className="rounded border-slate-300 dark:border-[#2A2A2A] text-[#FD7A00] focus:ring-[#FD7A00]"
+                      />
+                      <span>Atualizar automaticamente a data de próximo contato na ficha do lead</span>
+                    </label>
+                  )}
+
+                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-[#E5E5E5] cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={syncNextContact}
-                      onChange={(e) => setSyncNextContact(e.target.checked)}
-                      className="rounded border-slate-300 dark:border-[#2A2A2A] text-[#FD7A00] focus:ring-[#FD7A00]"
+                      checked={syncGoogleCalendarOnCreate}
+                      onChange={(e) => setSyncGoogleCalendarOnCreate(e.target.checked)}
+                      className="rounded border-slate-300 dark:border-[#2A2A2A] text-blue-500 focus:ring-blue-500"
                     />
-                    <span>Atualizar automaticamente a data de próximo contato na ficha do lead</span>
+                    <span className="flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                      <CalendarPlus className="h-3.5 w-3.5" />
+                      <span>Sincronizar e abrir no Google Agenda (100% gratuito)</span>
+                    </span>
                   </label>
-                )}
+                </div>
 
                 {/* Footer buttons */}
                 <div className="flex gap-2 justify-end pt-3 border-t border-slate-100 dark:border-[#2A2A2A]">
