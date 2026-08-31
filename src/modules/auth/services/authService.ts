@@ -73,7 +73,8 @@ export const authService = {
   },
 
   /**
-   * Realiza o cadastro exigindo obrigatoriamente um Código de Convite Secreto
+   * Realiza o cadastro do usuário. Se o código de convite for informado e válido, a conta é ativada imediatamente.
+   * Caso contrário, a conta é criada com status 'pending' para aprovação do administrador.
    */
   async register(credentials: RegisterCredentials): Promise<{ user: User; isPending: boolean; message: string }> {
     if (!credentials.name || !credentials.name.trim()) {
@@ -84,6 +85,10 @@ export const authService = {
       throw new Error('Informe um endereço de e-mail válido.');
     }
 
+    if (!credentials.phone || !credentials.phone.trim() || credentials.phone.trim().replace(/\D/g, '').length < 8) {
+      throw new Error('Informe seu número de Telefone / WhatsApp.');
+    }
+
     if (!credentials.password || credentials.password.length < 6) {
       throw new Error('A senha deve ter no mínimo 6 caracteres.');
     }
@@ -92,9 +97,7 @@ export const authService = {
       throw new Error('As senhas digitadas não coincidem.');
     }
 
-    if (!credentials.inviteCode || !credentials.inviteCode.trim()) {
-      throw new Error('O Código de Convite é obrigatório para cadastro no Merlin CRM.');
-    }
+    const hasInviteCode = Boolean(credentials.inviteCode && credentials.inviteCode.trim());
 
     const response = await fetch('/api/auth/register', {
       method: 'POST',
@@ -104,8 +107,9 @@ export const authService = {
       body: JSON.stringify({
         name: credentials.name.trim(),
         email: credentials.email.trim().toLowerCase(),
+        phone: credentials.phone.trim(),
         password: credentials.password,
-        inviteCode: credentials.inviteCode.trim().toUpperCase(),
+        inviteCode: hasInviteCode ? credentials.inviteCode!.trim().toUpperCase() : undefined,
       }),
     });
 
@@ -116,12 +120,12 @@ export const authService = {
       );
       const isPending = data.user?.status === 'pending';
       const message = data.message || (isPending 
-        ? 'Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.'
-        : 'Usuário cadastrado com sucesso!');
+        ? 'Cadastro realizado com sucesso! Sua conta está em análise e aguarda liberação do administrador. Em breve seu acesso será liberado.'
+        : 'Usuário cadastrado e ativado com sucesso!');
       return { user: data.user, isPending, message };
     } catch (err: any) {
       if (response.status === 403 || err.message?.includes('convite')) {
-        throw new Error('Código de convite inválido ou expirado. Verifique com seu administrador.');
+        throw new Error('Código de convite inválido ou expirado. Verifique com seu administrador ou cadastre-se sem código para solicitar acesso.');
       }
       throw err;
     }

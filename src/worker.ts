@@ -263,7 +263,7 @@ export default {
     // ROTAS DE AUTENTICAÇÃO
     // ==========================================
 
-    // POST /api/auth/register: Cadastro com código de convite
+    // POST /api/auth/register: Cadastro com telefone e código de convite opcional
     if (path === "/api/auth/register") {
       if (request.method !== "POST") {
         return errorResponse("Método não permitido.", 405);
@@ -277,7 +277,7 @@ export default {
           return errorResponse("Formato JSON inválido no corpo da requisição.", 400);
         }
 
-        const { name, email, password, inviteCode } = body || {};
+        const { name, email, phone, password, inviteCode } = body || {};
 
         if (!name || !name.trim()) {
           return errorResponse("O nome completo é obrigatório.", 400);
@@ -285,29 +285,31 @@ export default {
         if (!email || !email.trim() || !email.includes("@")) {
           return errorResponse("Informe um endereço de e-mail válido.", 400);
         }
+        if (!phone || !phone.trim() || phone.trim().replace(/\D/g, '').length < 8) {
+          return errorResponse("Informe um número de Telefone / WhatsApp válido.", 400);
+        }
         if (!password || password.length < 6) {
           return errorResponse("A senha deve ter no mínimo 6 caracteres.", 400);
         }
-        if (!inviteCode || !inviteCode.trim()) {
-          return errorResponse("O Código de Convite é obrigatório para cadastro.", 400);
-        }
 
         const emailNorm = email.trim().toLowerCase();
-        const codeNorm = inviteCode.trim().toUpperCase();
-        const isMaster = codeNorm === MASTER_INVITE_CODE;
+        const hasInviteCode = Boolean(inviteCode && inviteCode.trim());
+        const codeNorm = hasInviteCode ? inviteCode.trim().toUpperCase() : "";
+        const isMaster = hasInviteCode && codeNorm === MASTER_INVITE_CODE;
 
         if (!env.DB) {
           const role = isMaster ? "admin" : "broker";
-          const status = isMaster ? "active" : "pending";
+          const status = (isMaster || !hasInviteCode) ? (isMaster ? "active" : "pending") : "active";
           return jsonResponse({
             success: true,
             message: status === "pending"
-              ? "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação."
+              ? "Cadastro realizado com sucesso! Sua conta está em análise e aguarda liberação do administrador. Em breve seu acesso será liberado."
               : "Usuário cadastrado com sucesso!",
             user: {
               id: "usr_" + Math.random().toString(36).substring(2, 9),
               name: name.trim(),
               email: emailNorm,
+              phone: phone.trim(),
               role,
               status,
               createdAt: new Date().toISOString(),
@@ -321,8 +323,8 @@ export default {
           return errorResponse("Este e-mail já está cadastrado no sistema.", 400);
         }
 
-        // 2. Valida código de convite
-        if (!isMaster) {
+        // 2. Valida código de convite se informado
+        if (hasInviteCode && !isMaster) {
           const invite = await env.DB.prepare("SELECT * FROM invite_codes WHERE code = ?").bind(codeNorm).first();
           if (!invite || invite.is_active !== 1 || invite.used_by) {
             return errorResponse("Código de convite inválido ou expirado", 403);
@@ -334,8 +336,19 @@ export default {
         const userCount = (userCountRes?.count as number) || 0;
         const isFirstUser = userCount === 0;
 
-        const role = (isMaster || isFirstUser) ? "admin" : "broker";
-        const status = (isMaster || isFirstUser) ? "active" : "pending";
+        let role: "admin" | "broker" = "broker";
+        let status: "pending" | "active" | "blocked" = "pending";
+
+        if (isMaster || isFirstUser) {
+          role = "admin";
+          status = "active";
+        } else if (hasInviteCode) {
+          role = "broker";
+          status = "active";
+        } else {
+          role = "broker";
+          status = "pending";
+        }
 
         // 4. Cria hash de senha com Web Crypto API (crypto.subtle)
         const userId = "usr_" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
@@ -345,24 +358,30 @@ export default {
 
         try {
           await env.DB.prepare(
-            "INSERT INTO users (id, name, email, password_hash, salt, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-          ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, status, now).run();
+            "INSERT INTO users (id, name, email, phone, password_hash, salt, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          ).bind(userId, name.trim(), emailNorm, phone.trim(), passwordHash, salt, role, status, now).run();
         } catch (insertErr) {
-          // Fallback if status column does not exist yet in legacy DB
-          await env.DB.prepare(
-            "INSERT INTO users (id, name, email, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-          ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, now).run();
+          try {
+            await env.DB.prepare(
+              "INSERT INTO users (id, name, email, password_hash, salt, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, status, now).run();
+          } catch (insertErr2) {
+            // Fallback if status column does not exist yet in legacy DB
+            await env.DB.prepare(
+              "INSERT INTO users (id, name, email, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, now).run();
+          }
         }
 
-        // 5. Marca convite como usado se não for master
-        if (!isMaster) {
+        // 5. Marca convite como usado se fornecido e não for master
+        if (hasInviteCode && !isMaster) {
           await env.DB.prepare(
             "UPDATE invite_codes SET is_active = 0, used_by = ?, used_at = ? WHERE code = ?"
           ).bind(userId, now, codeNorm).run();
         }
 
         const message = status === "pending"
-          ? "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação."
+          ? "Cadastro realizado com sucesso! Sua conta está em análise e aguarda liberação do administrador. Em breve seu acesso será liberado."
           : "Usuário cadastrado com sucesso!";
 
         return jsonResponse({
@@ -372,6 +391,7 @@ export default {
             id: userId,
             name: name.trim(),
             email: emailNorm,
+            phone: phone.trim(),
             role,
             status,
             createdAt: now,

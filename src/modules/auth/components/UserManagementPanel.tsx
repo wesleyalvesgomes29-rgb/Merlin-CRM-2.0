@@ -21,7 +21,9 @@ import {
   Lock,
   Unlock,
   Search,
-  UserCheck2
+  UserCheck2,
+  Phone,
+  MessageCircle
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { authService } from '../services/authService';
@@ -398,7 +400,15 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({
                               {pendingUser.role === 'admin' ? 'Admin' : 'Corretor'}
                             </span>
                           </div>
-                          <p className="text-xs text-[#CCCCCC] truncate mt-0.5">{pendingUser.email}</p>
+                          <div className="flex items-center gap-3 text-xs text-[#CCCCCC] truncate mt-1 flex-wrap">
+                            <span>{pendingUser.email}</span>
+                            {pendingUser.phone && (
+                              <span className="flex items-center gap-1 text-[#10B981] bg-[#10B981]/10 px-2 py-0.5 rounded border border-[#10B981]/20">
+                                <Phone className="h-3 w-3" />
+                                {pendingUser.phone}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-[#888888] mt-1 flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             Cadastrado em: {new Date(pendingUser.created_at).toLocaleString('pt-BR')}
@@ -407,6 +417,19 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                        {pendingUser.phone && (
+                          <a
+                            href={`https://wa.me/55${pendingUser.phone.replace(/\D/g, '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-[#25D366]/15 hover:bg-[#25D366]/25 text-[#25D366] border border-[#25D366]/30 text-xs font-bold py-2 px-3 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                            title="Conversar com o corretor no WhatsApp"
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">WhatsApp</span>
+                          </a>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => handleApproveUser(pendingUser)}
@@ -564,12 +587,32 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({
                               </span>
                             </div>
 
-                            <p className="text-[11px] text-[#999999] truncate mt-0.5">{itemUser.email}</p>
+                            <div className="flex items-center gap-2.5 text-[11px] text-[#999999] truncate mt-0.5 flex-wrap">
+                              <span>{itemUser.email}</span>
+                              {itemUser.phone && (
+                                <span className="flex items-center gap-1 text-[#10B981] bg-[#10B981]/10 px-1.5 py-0.2 rounded border border-[#10B981]/20 font-mono text-[10px]">
+                                  <Phone className="h-2.5 w-2.5" />
+                                  {itemUser.phone}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
                         {/* Actions */}
                         <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
+                          {itemUser.phone && (
+                            <a
+                              href={`https://wa.me/55${itemUser.phone.replace(/\D/g, '')}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/30 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                              title="Conversar no WhatsApp"
+                            >
+                              <MessageCircle className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+
                           {isPending && (
                             <button
                               type="button"

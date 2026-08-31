@@ -12,6 +12,7 @@ export interface DbUser {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   password_hash: string;
   salt: string;
   role: 'admin' | 'broker';
@@ -306,8 +307,9 @@ export function validateInviteCode(code: string): { valid: boolean; isMaster: bo
 export async function registerUser(params: {
   name: string;
   email: string;
+  phone?: string;
   password: string;
-  inviteCode: string;
+  inviteCode?: string;
 }): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; message?: string; error?: string }> {
   const db = readDatabase();
   const emailNorm = params.email.trim().toLowerCase();
@@ -317,10 +319,19 @@ export async function registerUser(params: {
     return { success: false, error: 'Este e-mail já está cadastrado no sistema.' };
   }
 
-  // Validate Invite Code
-  const inviteCheck = validateInviteCode(params.inviteCode);
-  if (!inviteCheck.valid) {
-    return { success: false, error: 'Código de convite inválido ou expirado.' };
+  const isFirstUser = Object.keys(db.users || {}).length === 0;
+  const hasInviteCode = Boolean(params.inviteCode && params.inviteCode.trim());
+  let isValidInvite = false;
+  let isMasterInvite = false;
+
+  // Validate Invite Code if provided
+  if (hasInviteCode) {
+    const inviteCheck = validateInviteCode(params.inviteCode!);
+    if (!inviteCheck.valid) {
+      return { success: false, error: 'Código de convite inválido ou expirado.' };
+    }
+    isValidInvite = true;
+    isMasterInvite = inviteCheck.isMaster;
   }
 
   const now = new Date().toISOString();
@@ -330,16 +341,30 @@ export async function registerUser(params: {
   globalThis.crypto.getRandomValues(randomBytes);
   const userId = 'usr_' + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
   
-  // The first user in the database OR user using MASTER_INVITE_CODE is active admin
-  const isFirstUser = Object.keys(db.users || {}).length === 0;
-  const isMasterOrFirst = isFirstUser || inviteCheck.isMaster;
-  const role: 'admin' | 'broker' = isMasterOrFirst ? 'admin' : 'broker';
-  const status: 'pending' | 'active' | 'blocked' = isMasterOrFirst ? 'active' : 'pending';
+  // Rules for role and status:
+  // - If first user in database: admin & active
+  // - If has valid master invite code: admin & active
+  // - If has valid team invite code: broker & active (immediate access)
+  // - If registered WITHOUT invite code: broker & pending (awaiting admin approval)
+  let role: 'admin' | 'broker' = 'broker';
+  let status: 'pending' | 'active' | 'blocked' = 'pending';
+
+  if (isFirstUser || isMasterInvite) {
+    role = 'admin';
+    status = 'active';
+  } else if (isValidInvite) {
+    role = 'broker';
+    status = 'active';
+  } else {
+    role = 'broker';
+    status = 'pending';
+  }
 
   const newUser: DbUser = {
     id: userId,
     name: params.name.trim(),
     email: emailNorm,
+    phone: params.phone?.trim() || undefined,
     password_hash: passwordHash,
     salt: salt,
     role: role,
@@ -350,17 +375,19 @@ export async function registerUser(params: {
   db.users[userId] = newUser;
 
   // Mark invite code as used if not the reusable master code
-  const codeNorm = params.inviteCode.trim().toUpperCase();
-  if (db.invite_codes[codeNorm] && codeNorm !== MASTER_INVITE_CODE.toUpperCase()) {
-    db.invite_codes[codeNorm].is_active = 0;
-    db.invite_codes[codeNorm].used_by = userId;
-    db.invite_codes[codeNorm].used_at = now;
+  if (hasInviteCode) {
+    const codeNorm = params.inviteCode!.trim().toUpperCase();
+    if (db.invite_codes[codeNorm] && codeNorm !== MASTER_INVITE_CODE.toUpperCase()) {
+      db.invite_codes[codeNorm].is_active = 0;
+      db.invite_codes[codeNorm].used_by = userId;
+      db.invite_codes[codeNorm].used_at = now;
+    }
   }
 
   writeDatabase(db);
 
   const message = status === 'pending'
-    ? 'Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.'
+    ? 'Cadastro realizado com sucesso! Sua conta está em análise e aguarda liberação do administrador. Em breve seu acesso será liberado.'
     : 'Usuário cadastrado e ativado com sucesso!';
 
   return {
@@ -370,6 +397,7 @@ export async function registerUser(params: {
       id: newUser.id,
       name: newUser.name,
       email: newUser.email,
+      phone: newUser.phone,
       role: newUser.role,
       status: newUser.status,
       created_at: newUser.created_at
@@ -413,6 +441,7 @@ export async function loginUser(email: string, password: string): Promise<{ succ
       id: user.id,
       name: user.name,
       email: user.email,
+      phone: user.phone,
       role: user.role,
       status: user.status || 'active',
       created_at: user.created_at,
@@ -630,6 +659,7 @@ export function listUsers(adminUserId?: string): { success: boolean; users?: Arr
     id: u.id,
     name: u.name,
     email: u.email,
+    phone: u.phone,
     role: u.role,
     status: u.status || 'active',
     created_at: u.created_at,

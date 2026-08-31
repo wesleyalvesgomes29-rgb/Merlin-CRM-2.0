@@ -5,6 +5,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   avatarUrl?: string;
   role: UserRole;
   status?: UserStatus;
@@ -18,6 +19,7 @@ export interface UserAdminView {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   status: UserStatus;
   created_at: string;
@@ -39,9 +41,10 @@ export interface LoginCredentials {
 export interface RegisterCredentials {
   name: string;
   email: string;
+  phone: string;
   password: string;
   confirmPassword?: string;
-  inviteCode: string;
+  inviteCode?: string;
 }
 
 export interface RegisterResult {

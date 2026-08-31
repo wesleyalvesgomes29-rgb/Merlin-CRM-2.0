@@ -43,10 +43,10 @@ app.use(express.json());
 // MERLIN CRM - ROTAS DE AUTENTICAÇÃO E CONVITES
 // ==========================================
 
-// POST /api/auth/register: Cadastro restrito por código de convite
+// POST /api/auth/register: Cadastro com telefone e código de convite opcional
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { name, email, password, inviteCode } = req.body || {};
+    const { name, email, phone, password, inviteCode } = req.body || {};
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "O nome completo é obrigatório." });
@@ -56,23 +56,24 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ error: "Informe um endereço de e-mail válido." });
     }
 
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres." });
+    if (!phone || !phone.trim() || phone.trim().replace(/\D/g, '').length < 8) {
+      return res.status(400).json({ error: "Informe um número de Telefone / WhatsApp válido." });
     }
 
-    if (!inviteCode || !inviteCode.trim()) {
-      return res.status(400).json({ error: "O Código de Convite é obrigatório para cadastro." });
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres." });
     }
 
     const result = await registerUser({
       name,
       email,
+      phone,
       password,
-      inviteCode
+      inviteCode: inviteCode ? inviteCode.trim() : undefined
     });
 
     if (!result.success) {
-      // Se o erro foi relacionado a código inválido/expirado, retorna 403 conforme especificação
+      // Se o erro foi relacionado a código inválido/expirado, retorna 403
       if (result.error?.includes("convite")) {
         return res.status(403).json({ error: "Código de convite inválido ou expirado" });
       }
@@ -150,6 +151,7 @@ app.get("/api/auth/me", (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
         role: user.role,
         status: userStatus,
         createdAt: user.created_at,
