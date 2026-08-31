@@ -193,6 +193,27 @@ export const authService = {
   },
 
   /**
+   * Aprova e ativa o acesso de um usuário pendente (Administrador)
+   */
+  async approveUser(adminUserId: string, targetUserId: string): Promise<void> {
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(targetUserId)}/approve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Id': adminUserId,
+      },
+      body: JSON.stringify({
+        adminUserId,
+      }),
+    });
+
+    await parseApiResponse<{ success: boolean; message?: string; error?: string }>(
+      response,
+      'Erro ao aprovar usuário.'
+    );
+  },
+
+  /**
    * Remove/Rejeita um usuário (Administrador)
    */
   async deleteUser(adminUserId: string, targetUserId: string): Promise<void> {

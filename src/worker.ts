@@ -1536,13 +1536,14 @@ export default {
       }
     }
 
-    // PATCH / POST /api/admin/users/:id/status: Alteração de status de usuário
-    if (path.startsWith("/api/admin/users/") && path.endsWith("/status")) {
+    // PATCH / POST /api/admin/users/:id/status & /api/admin/users/:id/approve: Alteração de status de usuário
+    if (path.startsWith("/api/admin/users/") && (path.endsWith("/status") || path.endsWith("/approve"))) {
       if (request.method !== "POST" && request.method !== "PATCH") {
         return errorResponse("Método não permitido.", 405);
       }
 
-      const targetUserId = path.replace("/api/admin/users/", "").replace("/status", "");
+      const isApproveEndpoint = path.endsWith("/approve");
+      const targetUserId = path.replace("/api/admin/users/", "").replace("/status", "").replace("/approve", "");
       const adminUserId = request.headers.get("X-User-Id");
       let body: any = {};
       try {
@@ -1551,8 +1552,8 @@ export default {
         body = {};
       }
 
-      const { status, adminUserId: bodyAdminId } = body || {};
-      const effectiveAdminId = adminUserId || bodyAdminId;
+      const status = isApproveEndpoint ? "active" : body?.status;
+      const effectiveAdminId = adminUserId || body?.adminUserId;
 
       if (!effectiveAdminId) {
         return errorResponse("Acesso não autorizado.", 401);
@@ -1579,7 +1580,9 @@ export default {
 
       return jsonResponse({
         success: true,
-        message: `Status do usuário atualizado para "${status}" com sucesso!`,
+        message: isApproveEndpoint 
+          ? "Usuário aprovado e ativado com sucesso no CRM!" 
+          : `Status do usuário atualizado para "${status}" com sucesso!`,
       });
     }
 
@@ -1808,7 +1811,21 @@ Gere o JSON de síntese comportamental do Second Brain:`;
           );
         }
 
-        const effectiveBrokerName = (brokerName && typeof brokerName === "string" && brokerName.trim()) ? brokerName.trim() : "consultor imobiliário";
+        const callerUserId = request.headers.get("X-User-Id") || body?.userId;
+        let resolvedBrokerName = (brokerName && typeof brokerName === "string" && brokerName.trim()) ? brokerName.trim() : "";
+
+        if (!resolvedBrokerName && callerUserId && env.DB) {
+          try {
+            const callerUser = await env.DB.prepare("SELECT name FROM users WHERE id = ?").bind(callerUserId).first();
+            if (callerUser?.name && typeof callerUser.name === "string" && callerUser.name.trim()) {
+              resolvedBrokerName = callerUser.name.trim();
+            }
+          } catch {
+            // Non-blocking
+          }
+        }
+
+        const effectiveBrokerName = resolvedBrokerName || "consultor imobiliário";
         const effectiveCompanyName = (companyName && typeof companyName === "string" && companyName.trim()) ? companyName.trim() : "consultoria imobiliária especializada";
 
         const intentId = (playbookIntent as PlaybookPillarId) || "primeiro-contato";

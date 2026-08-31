@@ -103,7 +103,7 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({
     if (!user) return;
     setActionLoadingId(targetUser.id);
     try {
-      await authService.updateUserStatus(user.id, targetUser.id, 'active');
+      await authService.approveUser(user.id, targetUser.id);
       setUsers((prev) =>
         prev.map((u) => (u.id === targetUser.id ? { ...u, status: 'active' } : u))
       );

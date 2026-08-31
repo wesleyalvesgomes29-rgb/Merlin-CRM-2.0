@@ -1036,6 +1036,12 @@ const handleUpdateUserStatus = (req: express.Request, res: express.Response) => 
 app.patch("/api/admin/users/:id/status", handleUpdateUserStatus);
 app.post("/api/admin/users/:id/status", handleUpdateUserStatus);
 
+// POST /api/admin/users/:id/approve: Aprovação direta de usuário
+app.post("/api/admin/users/:id/approve", (req, res) => {
+  req.body = { ...req.body, status: 'active' };
+  return handleUpdateUserStatus(req, res);
+});
+
 // Handler para exclusão/rejeição de usuário
 const handleDeleteUser = (req: express.Request, res: express.Response) => {
   try {
@@ -1969,7 +1975,17 @@ app.post("/api/gemini/generate-message", async (req, res) => {
       return res.status(400).json({ error: "O nome do cliente é obrigatório." });
     }
 
-    const effectiveBrokerName = (brokerName && typeof brokerName === "string" && brokerName.trim()) ? brokerName.trim() : "consultor imobiliário";
+    const callerUserId = (req.headers["x-user-id"] as string) || req.body?.userId;
+    let resolvedBrokerName = (brokerName && typeof brokerName === "string" && brokerName.trim()) ? brokerName.trim() : "";
+
+    if (!resolvedBrokerName && callerUserId) {
+      const callerUser = findUserById(callerUserId);
+      if (callerUser?.name && typeof callerUser.name === "string" && callerUser.name.trim()) {
+        resolvedBrokerName = callerUser.name.trim();
+      }
+    }
+
+    const effectiveBrokerName = resolvedBrokerName || "consultor imobiliário";
     const effectiveCompanyName = (companyName && typeof companyName === "string" && companyName.trim()) ? companyName.trim() : "consultoria imobiliária especializada";
 
     const intentId = (playbookIntent as PlaybookPillarId) || "primeiro-contato";
