@@ -61,8 +61,8 @@ export const LoginForm: React.FC = () => {
         <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-[#FF7A00]/5 rounded-full blur-3xl pointer-events-none" />
 
         {/* Logo and Header */}
-        <div className="text-center space-y-2 relative z-10">
-          <div className="flex items-center justify-center mb-1">
+        <div className="text-center relative z-10 space-y-3">
+          <div className="flex items-center justify-center">
             <img
               src={merlinLogo}
               alt="Merlin CRM"
@@ -70,10 +70,7 @@ export const LoginForm: React.FC = () => {
               referrerPolicy="no-referrer"
             />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-            Merlin CRM
-          </h1>
-          <p className="text-xs text-[#BDBDBD] max-w-xs mx-auto">
+          <p className="text-xs text-[#BDBDBD] max-w-xs mx-auto leading-relaxed">
             Plataforma de alta performance para corretores e imobiliárias de elite.
           </p>
         </div>
