@@ -13,6 +13,9 @@ import {
   createInviteCode, 
   listInviteCodes, 
   revokeInviteCode,
+  listUsers,
+  updateUserStatus,
+  deleteUser,
   saveUserGoogleTokens,
   removeUserGoogleTokens,
   getUserGoogleTokens,
@@ -78,7 +81,7 @@ app.post("/api/auth/register", async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Usuário cadastrado com sucesso!",
+      message: result.message || "Usuário cadastrado com sucesso!",
       user: result.user
     });
   } catch (error: any) {
@@ -99,6 +102,14 @@ app.post("/api/auth/login", async (req, res) => {
     const result = await loginUser(email, password);
 
     if (!result.success || !result.user) {
+      // Return 403 when user is pending approval or blocked
+      if (result.isPending || result.isBlocked) {
+        return res.status(403).json({ 
+          error: result.error,
+          isPending: result.isPending,
+          isBlocked: result.isBlocked
+        });
+      }
       return res.status(401).json({ error: result.error || "E-mail ou senha incorretos." });
     }
 
@@ -125,6 +136,14 @@ app.get("/api/auth/me", (req, res) => {
       return res.status(404).json({ error: "Usuário não encontrado." });
     }
 
+    const userStatus = user.status || 'active';
+    if (userStatus === 'pending') {
+      return res.status(403).json({ error: "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação." });
+    }
+    if (userStatus === 'blocked') {
+      return res.status(403).json({ error: "Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte." });
+    }
+
     return res.json({
       success: true,
       user: {
@@ -132,6 +151,7 @@ app.get("/api/auth/me", (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        status: userStatus,
         createdAt: user.created_at,
         google_email: user.google_email,
         google_connected_at: user.google_connected_at,
@@ -947,6 +967,104 @@ app.post("/api/admin/revoke-invite", (req, res) => {
     return res.status(500).json({ error: "Erro ao revogar código de convite." });
   }
 });
+
+// ==========================================
+// MERLIN CRM - GESTÃO DE USUÁRIOS & APROVAÇÃO (ADMIN)
+// ==========================================
+
+// GET /api/admin/users: Listagem de todos os usuários do sistema
+app.get("/api/admin/users", (req, res) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+    if (!adminUserId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    const admin = findUserById(adminUserId);
+    if (!admin || admin.role !== "admin") {
+      return res.status(403).json({ error: "Acesso restrito a administradores." });
+    }
+
+    const result = listUsers(adminUserId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      users: result.users
+    });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao listar usuários:", error);
+    return res.status(500).json({ error: "Erro interno ao listar usuários." });
+  }
+});
+
+// Handler para alterar o status de um usuário (Aprovar, Bloquear, Pendente)
+const handleUpdateUserStatus = (req: express.Request, res: express.Response) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || req.body?.adminUserId;
+    const targetUserId = req.params.id;
+    const { status } = req.body || {};
+
+    if (!adminUserId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    if (!targetUserId || !status || !['pending', 'active', 'blocked'].includes(status)) {
+      return res.status(400).json({ error: "Parâmetros inválidos. Status deve ser: pending, active ou blocked." });
+    }
+
+    const result = updateUserStatus(adminUserId, targetUserId, status as any);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Erro ao atualizar status do usuário." });
+    }
+
+    return res.json({
+      success: true,
+      message: `Status do usuário atualizado para "${status}" com sucesso!`,
+      user: result.user
+    });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao atualizar status:", error);
+    return res.status(500).json({ error: "Erro ao atualizar status do usuário." });
+  }
+};
+
+app.patch("/api/admin/users/:id/status", handleUpdateUserStatus);
+app.post("/api/admin/users/:id/status", handleUpdateUserStatus);
+
+// Handler para exclusão/rejeição de usuário
+const handleDeleteUser = (req: express.Request, res: express.Response) => {
+  try {
+    const adminUserId = (req.headers["x-user-id"] as string) || req.body?.adminUserId;
+    const targetUserId = req.params.id;
+
+    if (!adminUserId) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+
+    if (!targetUserId) {
+      return res.status(400).json({ error: "ID do usuário obrigatório." });
+    }
+
+    const result = deleteUser(adminUserId, targetUserId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Erro ao excluir usuário." });
+    }
+
+    return res.json({
+      success: true,
+      message: "Usuário excluído com sucesso."
+    });
+  } catch (error: any) {
+    console.error("[Merlin Admin] Erro ao excluir usuário:", error);
+    return res.status(500).json({ error: "Erro ao excluir usuário." });
+  }
+};
+
+app.delete("/api/admin/users/:id", handleDeleteUser);
+app.post("/api/admin/users/:id/delete", handleDeleteUser);
 
 // ==========================================
 // MERLIN CRM - ROTAS DE SINCRONIZAÇÃO E PERSISTÊNCIA (COM ISOLAMENTO)

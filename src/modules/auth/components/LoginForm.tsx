@@ -9,13 +9,15 @@ import {
   Loader2, 
   ShieldCheck,
   CheckCircle2,
-  Info
+  Info,
+  Clock,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import merlinLogo from '../../../assets/images/merlin_logo_transparent.png';
 
 export const LoginForm: React.FC = () => {
-  const { login, register, isLoading, error, clearError } = useAuth();
+  const { login, register, isLoading, error, clearError, registrationSuccessNotice, clearRegistrationNotice } = useAuth();
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // Login form state
@@ -33,25 +35,41 @@ export const LoginForm: React.FC = () => {
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail.trim() || !loginPassword) return;
+    if (registrationSuccessNotice) clearRegistrationNotice();
     await login({ email: loginEmail, password: loginPassword });
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!regName.trim() || !regEmail.trim() || !regPassword || !regInviteCode.trim()) return;
-    await register({
+    const result = await register({
       name: regName,
       email: regEmail,
       password: regPassword,
       confirmPassword: regConfirmPassword,
       inviteCode: regInviteCode.toUpperCase().trim(),
     });
+
+    if (result.success && result.isPending) {
+      // Clear register inputs and prefill login email
+      setLoginEmail(regEmail.trim());
+      setRegName('');
+      setRegEmail('');
+      setRegPassword('');
+      setRegConfirmPassword('');
+      setRegInviteCode('');
+      setActiveTab('login');
+    }
   };
 
   const handleTabSwitch = (tab: 'login' | 'register') => {
     setActiveTab(tab);
     if (error) clearError();
+    if (registrationSuccessNotice) clearRegistrationNotice();
   };
+
+  const isPendingApprovalError = error?.includes('aguardando aprovação') || error?.includes('aprovação do administrador');
+  const isBlockedError = error?.includes('bloqueada') || error?.includes('bloqueado');
 
   return (
     <div className="min-h-screen bg-[#0B0B0B] flex items-center justify-center p-4 sm:p-6 text-white font-sans selection:bg-[#FF7A00]/30 selection:text-white">
@@ -104,13 +122,42 @@ export const LoginForm: React.FC = () => {
           </button>
         </div>
 
-        {/* Error Alert */}
+        {/* Pending Registration Success Notice */}
+        {registrationSuccessNotice && (
+          <div className="mb-5 bg-[#FF7A00]/10 border border-[#FF7A00]/40 text-[#FF9800] text-xs rounded-xl p-4 flex items-start gap-3 animate-fadeIn">
+            <div className="p-2 bg-[#FF7A00]/20 rounded-lg text-[#FF7A00] shrink-0 mt-0.5">
+              <Clock className="h-5 w-5" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <span className="font-bold text-white block text-sm">Cadastro Realizado com Sucesso!</span>
+              <p className="text-xs text-[#E5E5E5] leading-relaxed">
+                {registrationSuccessNotice}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Error / Status Alerts */}
         {error && (
-          <div className="mb-5 bg-[#EF4444]/10 border border-[#EF4444]/30 text-[#EF4444] text-xs rounded-xl p-3.5 flex items-start gap-3 animate-fadeIn">
-            <AlertCircle className="h-5 w-5 text-[#EF4444] shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="font-semibold block mb-0.5">Aviso de Autenticação</span>
-              <span>{error}</span>
+          <div className={`mb-5 text-xs rounded-xl p-3.5 flex items-start gap-3 animate-fadeIn ${
+            isPendingApprovalError 
+              ? 'bg-[#F59E0B]/15 border border-[#F59E0B]/40 text-[#FCD34D]' 
+              : isBlockedError
+              ? 'bg-[#EF4444]/15 border border-[#EF4444]/40 text-[#FCA5A5]'
+              : 'bg-[#EF4444]/10 border border-[#EF4444]/30 text-[#EF4444]'
+          }`}>
+            {isPendingApprovalError ? (
+              <Clock className="h-5 w-5 text-[#F59E0B] shrink-0 mt-0.5" />
+            ) : isBlockedError ? (
+              <ShieldAlert className="h-5 w-5 text-[#EF4444] shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="h-5 w-5 text-[#EF4444] shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 space-y-0.5">
+              <span className="font-bold block text-white">
+                {isPendingApprovalError ? 'Aguardando Aprovação' : isBlockedError ? 'Acesso Bloqueado' : 'Aviso de Autenticação'}
+              </span>
+              <p className="text-[11px] leading-relaxed opacity-90">{error}</p>
             </div>
           </div>
         )}

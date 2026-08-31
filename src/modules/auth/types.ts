@@ -1,4 +1,5 @@
 export type UserRole = 'admin' | 'broker';
+export type UserStatus = 'pending' | 'active' | 'blocked';
 
 export interface User {
   id: string;
@@ -6,7 +7,20 @@ export interface User {
   email: string;
   avatarUrl?: string;
   role: UserRole;
+  status?: UserStatus;
   createdAt: string;
+  google_email?: string | null;
+  google_connected_at?: string | null;
+  isGoogleConnected?: boolean;
+}
+
+export interface UserAdminView {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+  created_at: string;
   google_email?: string | null;
   google_connected_at?: string | null;
   isGoogleConnected?: boolean;
@@ -30,6 +44,13 @@ export interface RegisterCredentials {
   inviteCode: string;
 }
 
+export interface RegisterResult {
+  success: boolean;
+  user: User;
+  isPending: boolean;
+  message?: string;
+}
+
 export interface InviteCode {
   code: string;
   created_by: string | null;
@@ -46,11 +67,13 @@ export interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  registrationSuccessNotice?: string | null;
 }
 
 export interface AuthContextType extends AuthState {
   login: (credentials: LoginCredentials) => Promise<boolean>;
-  register: (credentials: RegisterCredentials) => Promise<boolean>;
+  register: (credentials: RegisterCredentials) => Promise<{ success: boolean; isPending: boolean; message?: string }>;
   logout: () => void;
   clearError: () => void;
+  clearRegistrationNotice: () => void;
 }

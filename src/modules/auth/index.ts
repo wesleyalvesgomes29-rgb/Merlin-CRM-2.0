@@ -7,3 +7,4 @@ export * from './components/LoginForm';
 export * from './components/UserMenu';
 export * from './components/AuthGuard';
 export * from './components/AdminInviteModal';
+export * from './components/UserManagementPanel';

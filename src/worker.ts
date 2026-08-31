@@ -295,17 +295,21 @@ export default {
         const emailNorm = email.trim().toLowerCase();
         const codeNorm = inviteCode.trim().toUpperCase();
         const isMaster = codeNorm === MASTER_INVITE_CODE;
-        const role = isMaster ? "admin" : "broker";
 
         if (!env.DB) {
-          // Fallback resiliente se o D1 não estiver configurado
+          const role = isMaster ? "admin" : "broker";
+          const status = isMaster ? "active" : "pending";
           return jsonResponse({
             success: true,
+            message: status === "pending"
+              ? "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação."
+              : "Usuário cadastrado com sucesso!",
             user: {
               id: "usr_" + Math.random().toString(36).substring(2, 9),
               name: name.trim(),
               email: emailNorm,
               role,
+              status,
               createdAt: new Date().toISOString(),
             },
           }, 201);
@@ -325,31 +329,51 @@ export default {
           }
         }
 
-        // 3. Cria hash de senha com Web Crypto API (crypto.subtle)
+        // 3. Determina se é o primeiro usuário do sistema (que nasce como active e admin)
+        const userCountRes = await env.DB.prepare("SELECT COUNT(*) as count FROM users").first();
+        const userCount = (userCountRes?.count as number) || 0;
+        const isFirstUser = userCount === 0;
+
+        const role = (isMaster || isFirstUser) ? "admin" : "broker";
+        const status = (isMaster || isFirstUser) ? "active" : "pending";
+
+        // 4. Cria hash de senha com Web Crypto API (crypto.subtle)
         const userId = "usr_" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
         const salt = generateRandomSalt();
         const passwordHash = await hashPasswordWithSalt(password, salt);
         const now = new Date().toISOString();
 
-        await env.DB.prepare(
-          "INSERT INTO users (id, name, email, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, now).run();
+        try {
+          await env.DB.prepare(
+            "INSERT INTO users (id, name, email, password_hash, salt, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+          ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, status, now).run();
+        } catch (insertErr) {
+          // Fallback if status column does not exist yet in legacy DB
+          await env.DB.prepare(
+            "INSERT INTO users (id, name, email, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+          ).bind(userId, name.trim(), emailNorm, passwordHash, salt, role, now).run();
+        }
 
-        // 4. Marca convite como usado se não for master
+        // 5. Marca convite como usado se não for master
         if (!isMaster) {
           await env.DB.prepare(
             "UPDATE invite_codes SET is_active = 0, used_by = ?, used_at = ? WHERE code = ?"
           ).bind(userId, now, codeNorm).run();
         }
 
+        const message = status === "pending"
+          ? "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação."
+          : "Usuário cadastrado com sucesso!";
+
         return jsonResponse({
           success: true,
-          message: "Usuário cadastrado com sucesso!",
+          message,
           user: {
             id: userId,
             name: name.trim(),
             email: emailNorm,
             role,
+            status,
             createdAt: now,
           },
         }, 201);
@@ -388,6 +412,7 @@ export default {
               name: emailNorm.split("@")[0],
               email: emailNorm,
               role: "admin",
+              status: "active",
               createdAt: new Date().toISOString(),
             },
           }, 200);
@@ -403,6 +428,21 @@ export default {
           return errorResponse("E-mail ou senha incorretos.", 401);
         }
 
+        const userStatus = user.status || "active";
+        if (userStatus === "pending") {
+          return jsonResponse({
+            error: "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.",
+            isPending: true
+          }, 403);
+        }
+
+        if (userStatus === "blocked") {
+          return jsonResponse({
+            error: "Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.",
+            isBlocked: true
+          }, 403);
+        }
+
         return jsonResponse({
           success: true,
           user: {
@@ -410,6 +450,7 @@ export default {
             name: user.name,
             email: user.email,
             role: user.role,
+            status: userStatus,
             createdAt: user.created_at,
           },
         }, 200);
@@ -438,14 +479,23 @@ export default {
             name: "Corretor Merlin",
             email: "corretor@merlin.crm",
             role: "admin",
+            status: "active",
             createdAt: new Date().toISOString(),
           },
         });
       }
 
-      const user = await env.DB.prepare("SELECT id, name, email, role, created_at FROM users WHERE id = ?").bind(userId).first();
+      const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
       if (!user) {
         return errorResponse("Usuário não encontrado.", 404);
+      }
+
+      const userStatus = user.status || "active";
+      if (userStatus === "pending") {
+        return jsonResponse({ error: "Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação." }, 403);
+      }
+      if (userStatus === "blocked") {
+        return jsonResponse({ error: "Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte." }, 403);
       }
 
       return jsonResponse({
@@ -455,7 +505,11 @@ export default {
           name: user.name,
           email: user.email,
           role: user.role,
+          status: userStatus,
           createdAt: user.created_at,
+          google_email: user.google_email,
+          google_connected_at: user.google_connected_at,
+          isGoogleConnected: !!(user.google_access_token || user.google_refresh_token),
         },
       });
     }
@@ -1397,6 +1451,158 @@ export default {
       await env.DB.prepare("UPDATE invite_codes SET is_active = 0 WHERE code = ?").bind(codeNorm).run();
 
       return jsonResponse({ success: true, message: "Código de convite revogado com sucesso." });
+    }
+
+    // ==========================================
+    // ROTAS DE GESTÃO DE USUÁRIOS & APROVAÇÕES (ADMIN)
+    // ==========================================
+
+    // GET /api/admin/users: Listagem de todos os usuários
+    if (path === "/api/admin/users") {
+      if (request.method !== "GET") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const adminUserId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      if (!adminUserId) {
+        return errorResponse("Acesso não autorizado.", 401);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({
+          success: true,
+          users: [
+            {
+              id: adminUserId,
+              name: "Administrador Merlin",
+              email: "admin@merlin.crm",
+              role: "admin",
+              status: "active",
+              created_at: new Date().toISOString(),
+            },
+          ],
+        });
+      }
+
+      const admin = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(adminUserId).first();
+      if (!admin || admin.role !== "admin") {
+        return errorResponse("Acesso restrito a administradores.", 403);
+      }
+
+      try {
+        const result = await env.DB.prepare(
+          "SELECT id, name, email, role, status, created_at, google_email, google_connected_at FROM users ORDER BY created_at DESC"
+        ).all();
+
+        const usersList = (result.results || []).map((u: any) => ({
+          ...u,
+          status: u.status || "active",
+        }));
+
+        return jsonResponse({
+          success: true,
+          users: usersList,
+        });
+      } catch (err: any) {
+        // Fallback if status column is not yet present
+        const result = await env.DB.prepare(
+          "SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC"
+        ).all();
+
+        return jsonResponse({
+          success: true,
+          users: (result.results || []).map((u: any) => ({ ...u, status: "active" })),
+        });
+      }
+    }
+
+    // PATCH / POST /api/admin/users/:id/status: Alteração de status de usuário
+    if (path.startsWith("/api/admin/users/") && path.endsWith("/status")) {
+      if (request.method !== "POST" && request.method !== "PATCH") {
+        return errorResponse("Método não permitido.", 405);
+      }
+
+      const targetUserId = path.replace("/api/admin/users/", "").replace("/status", "");
+      const adminUserId = request.headers.get("X-User-Id");
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      const { status, adminUserId: bodyAdminId } = body || {};
+      const effectiveAdminId = adminUserId || bodyAdminId;
+
+      if (!effectiveAdminId) {
+        return errorResponse("Acesso não autorizado.", 401);
+      }
+
+      if (!targetUserId || !status || !["pending", "active", "blocked"].includes(status)) {
+        return errorResponse("Parâmetros inválidos. Status deve ser: pending, active ou blocked.", 400);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({ success: true, message: `Status atualizado para ${status}.` });
+      }
+
+      const admin = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(effectiveAdminId).first();
+      if (!admin || admin.role !== "admin") {
+        return errorResponse("Apenas administradores podem alterar o status de usuários.", 403);
+      }
+
+      if (effectiveAdminId === targetUserId && status !== "active") {
+        return errorResponse("Você não pode desativar ou bloquear sua própria conta de administrador.", 400);
+      }
+
+      await env.DB.prepare("UPDATE users SET status = ? WHERE id = ?").bind(status, targetUserId).run();
+
+      return jsonResponse({
+        success: true,
+        message: `Status do usuário atualizado para "${status}" com sucesso!`,
+      });
+    }
+
+    // DELETE / POST /api/admin/users/:id/delete: Exclusão de usuário
+    if ((path.startsWith("/api/admin/users/") && (request.method === "DELETE" || path.endsWith("/delete")))) {
+      const targetUserId = path.replace("/api/admin/users/", "").replace("/delete", "");
+      const adminUserId = request.headers.get("X-User-Id");
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      const effectiveAdminId = adminUserId || body?.adminUserId;
+      if (!effectiveAdminId) {
+        return errorResponse("Acesso não autorizado.", 401);
+      }
+
+      if (!targetUserId) {
+        return errorResponse("ID do usuário obrigatório.", 400);
+      }
+
+      if (effectiveAdminId === targetUserId) {
+        return errorResponse("Você não pode excluir sua própria conta de administrador.", 400);
+      }
+
+      if (!env.DB) {
+        return jsonResponse({ success: true, message: "Usuário excluído com sucesso." });
+      }
+
+      const admin = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(effectiveAdminId).first();
+      if (!admin || admin.role !== "admin") {
+        return errorResponse("Apenas administradores podem excluir usuários.", 403);
+      }
+
+      await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(targetUserId).run();
+      await env.DB.prepare("UPDATE invite_codes SET used_by = NULL, used_at = NULL, is_active = 1 WHERE used_by = ?").bind(targetUserId).run();
+
+      return jsonResponse({
+        success: true,
+        message: "Usuário excluído com sucesso.",
+      });
     }
 
     // Roteamento Gemini e CRM

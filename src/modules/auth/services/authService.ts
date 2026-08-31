@@ -1,4 +1,4 @@
-import { LoginCredentials, RegisterCredentials, User, InviteCode } from '../types';
+import { LoginCredentials, RegisterCredentials, User, InviteCode, UserAdminView, UserStatus } from '../types';
 
 /**
  * Utilitário seguro para processar respostas da API, prevenindo erros de parse JSON
@@ -64,7 +64,7 @@ export const authService = {
       }),
     });
 
-    const data = await parseApiResponse<{ success: boolean; user: User; error?: string }>(
+    const data = await parseApiResponse<{ success: boolean; user: User; error?: string; isPending?: boolean; isBlocked?: boolean }>(
       response,
       'E-mail ou senha incorretos.'
     );
@@ -75,7 +75,7 @@ export const authService = {
   /**
    * Realiza o cadastro exigindo obrigatoriamente um Código de Convite Secreto
    */
-  async register(credentials: RegisterCredentials): Promise<User> {
+  async register(credentials: RegisterCredentials): Promise<{ user: User; isPending: boolean; message: string }> {
     if (!credentials.name || !credentials.name.trim()) {
       throw new Error('Informe seu nome completo.');
     }
@@ -110,11 +110,15 @@ export const authService = {
     });
 
     try {
-      const data = await parseApiResponse<{ success: boolean; user: User; error?: string }>(
+      const data = await parseApiResponse<{ success: boolean; user: User; message?: string; error?: string }>(
         response,
         'Falha ao realizar cadastro.'
       );
-      return data.user;
+      const isPending = data.user?.status === 'pending';
+      const message = data.message || (isPending 
+        ? 'Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.'
+        : 'Usuário cadastrado com sucesso!');
+      return { user: data.user, isPending, message };
     } catch (err: any) {
       if (response.status === 403 || err.message?.includes('convite')) {
         throw new Error('Código de convite inválido ou expirado. Verifique com seu administrador.');
@@ -142,6 +146,67 @@ export const authService = {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * Lista todos os usuários do sistema (Administrador)
+   */
+  async listUsers(adminUserId: string): Promise<UserAdminView[]> {
+    const response = await fetch(`/api/admin/users?userId=${encodeURIComponent(adminUserId)}`, {
+      headers: {
+        'X-User-Id': adminUserId,
+      },
+    });
+
+    const data = await parseApiResponse<{ success: boolean; users: UserAdminView[]; error?: string }>(
+      response,
+      'Erro ao listar usuários.'
+    );
+
+    return data.users || [];
+  },
+
+  /**
+   * Atualiza o status de um usuário (Administrador: pending | active | blocked)
+   */
+  async updateUserStatus(adminUserId: string, targetUserId: string, status: UserStatus): Promise<void> {
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(targetUserId)}/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Id': adminUserId,
+      },
+      body: JSON.stringify({
+        adminUserId,
+        status,
+      }),
+    });
+
+    await parseApiResponse<{ success: boolean; message?: string; error?: string }>(
+      response,
+      'Erro ao atualizar status do usuário.'
+    );
+  },
+
+  /**
+   * Remove/Rejeita um usuário (Administrador)
+   */
+  async deleteUser(adminUserId: string, targetUserId: string): Promise<void> {
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(targetUserId)}/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Id': adminUserId,
+      },
+      body: JSON.stringify({
+        adminUserId,
+      }),
+    });
+
+    await parseApiResponse<{ success: boolean; message?: string; error?: string }>(
+      response,
+      'Erro ao excluir usuário.'
+    );
   },
 
   /**

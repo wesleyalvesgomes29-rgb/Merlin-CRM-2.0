@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { LogOut, User as UserIcon, KeyRound, Shield, Calendar } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LogOut, User as UserIcon, KeyRound, Shield, Calendar, Users } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { AdminInviteModal } from './AdminInviteModal';
+import { UserManagementPanel } from './UserManagementPanel';
 import { GoogleIntegrationModal } from '../../../components/GoogleIntegrationModal';
 import { getStoredGoogleAccessToken } from '../../../lib/calendarUtils';
+import { authService } from '../services/authService';
 
 interface UserMenuProps {
   compact?: boolean;
@@ -11,16 +12,37 @@ interface UserMenuProps {
 
 export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
   const { user, logout } = useAuth();
-  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminPanelTab, setAdminPanelTab] = useState<'pending' | 'all_users' | 'invites'>('pending');
   const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [pendingCount, setPendingCount] = useState<number>(0);
   const [hasGoogleToken, setHasGoogleToken] = useState<boolean>(() => {
     return !!(user?.isGoogleConnected || getStoredGoogleAccessToken());
   });
 
-  if (!user) return null;
+  const isAdmin = user?.role === 'admin';
+  const isGoogleConnected = hasGoogleToken || user?.isGoogleConnected;
 
-  const isAdmin = user.role === 'admin';
-  const isGoogleConnected = hasGoogleToken || user.isGoogleConnected;
+  // Check pending users count for admin badge
+  useEffect(() => {
+    if (!user || user.role !== 'admin') return;
+
+    const checkPending = async () => {
+      try {
+        const usersList = await authService.listUsers(user.id);
+        const pending = usersList.filter((u) => u.status === 'pending').length;
+        setPendingCount(pending);
+      } catch {
+        // silent fail
+      }
+    };
+
+    checkPending();
+    const interval = setInterval(checkPending, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  if (!user) return null;
 
   if (compact) {
     return (
@@ -43,11 +65,19 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
 
           {isAdmin && (
             <button
-              onClick={() => setShowInviteModal(true)}
-              title="Gerenciar Convites da Equipe"
-              className="p-2 hover:bg-[#222222] text-[#FF7A00] hover:text-[#FF9800] rounded-lg transition-all cursor-pointer flex items-center justify-center"
+              onClick={() => {
+                setAdminPanelTab('pending');
+                setShowAdminPanel(true);
+              }}
+              title="Gestão de Usuários & Aprovações"
+              className="p-2 hover:bg-[#222222] text-[#FF7A00] hover:text-[#FF9800] rounded-lg transition-all cursor-pointer flex items-center justify-center relative"
             >
-              <KeyRound className="h-4 w-4" />
+              <Users className="h-4 w-4" />
+              {pendingCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 bg-[#EF4444] text-white text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center border-2 border-[#111111] animate-pulse">
+                  {pendingCount}
+                </span>
+              )}
             </button>
           )}
 
@@ -61,9 +91,18 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
         </div>
 
         {isAdmin && (
-          <AdminInviteModal
-            isOpen={showInviteModal}
-            onClose={() => setShowInviteModal(false)}
+          <UserManagementPanel
+            isOpen={showAdminPanel}
+            initialTab={adminPanelTab}
+            onClose={() => {
+              setShowAdminPanel(false);
+              // refresh pending count
+              if (user) {
+                authService.listUsers(user.id).then((list) => {
+                  setPendingCount(list.filter((u) => u.status === 'pending').length);
+                }).catch(() => {});
+              }
+            }}
           />
         )}
 
@@ -129,19 +168,41 @@ export const UserMenu: React.FC<UserMenuProps> = ({ compact = false }) => {
         {isAdmin && (
           <button
             type="button"
-            onClick={() => setShowInviteModal(true)}
-            className="w-full bg-[#FF7A00]/15 hover:bg-[#FF7A00]/25 text-[#FF9800] border border-[#FF7A00]/30 text-[11px] font-bold py-1.5 px-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            onClick={() => {
+              setAdminPanelTab(pendingCount > 0 ? 'pending' : 'all_users');
+              setShowAdminPanel(true);
+            }}
+            className="w-full bg-[#FF7A00]/15 hover:bg-[#FF7A00]/25 text-[#FF9800] border border-[#FF7A00]/30 text-[11px] font-bold py-1.5 px-2.5 rounded-lg flex items-center justify-between gap-1.5 transition-all cursor-pointer"
           >
-            <KeyRound className="h-3.5 w-3.5" />
-            <span>Gerenciar Convites da Equipe</span>
+            <div className="flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5" />
+              <span>Gestão de Usuários</span>
+            </div>
+            {pendingCount > 0 ? (
+              <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-[#EF4444] text-white animate-pulse">
+                {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="text-[9px] text-[#888888] font-normal">
+                Painel
+              </span>
+            )}
           </button>
         )}
       </div>
 
       {isAdmin && (
-        <AdminInviteModal
-          isOpen={showInviteModal}
-          onClose={() => setShowInviteModal(false)}
+        <UserManagementPanel
+          isOpen={showAdminPanel}
+          initialTab={adminPanelTab}
+          onClose={() => {
+            setShowAdminPanel(false);
+            if (user) {
+              authService.listUsers(user.id).then((list) => {
+                setPendingCount(list.filter((u) => u.status === 'pending').length);
+              }).catch(() => {});
+            }
+          }}
         />
       )}
 

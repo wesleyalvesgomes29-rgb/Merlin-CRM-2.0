@@ -15,6 +15,7 @@ export interface DbUser {
   password_hash: string;
   salt: string;
   role: 'admin' | 'broker';
+  status: 'pending' | 'active' | 'blocked';
   google_access_token?: string | null;
   google_refresh_token?: string | null;
   google_token_expiry?: number | null;
@@ -206,6 +207,14 @@ export function initLocalDatabase(): DatabaseSchema {
     if (!parsed.users) {
       parsed.users = {};
       updated = true;
+    } else {
+      // Ensure all existing users have a status
+      for (const u of Object.values(parsed.users)) {
+        if (!u.status) {
+          u.status = 'active';
+          updated = true;
+        }
+      }
     }
     if (!parsed.invite_codes) {
       parsed.invite_codes = {};
@@ -299,7 +308,7 @@ export async function registerUser(params: {
   email: string;
   password: string;
   inviteCode: string;
-}): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string }> {
+}): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; message?: string; error?: string }> {
   const db = readDatabase();
   const emailNorm = params.email.trim().toLowerCase();
 
@@ -321,8 +330,11 @@ export async function registerUser(params: {
   globalThis.crypto.getRandomValues(randomBytes);
   const userId = 'usr_' + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
   
-  // If master code was used, assign role 'admin', otherwise 'broker'
-  const role: 'admin' | 'broker' = inviteCheck.isMaster ? 'admin' : 'broker';
+  // The first user in the database OR user using MASTER_INVITE_CODE is active admin
+  const isFirstUser = Object.keys(db.users || {}).length === 0;
+  const isMasterOrFirst = isFirstUser || inviteCheck.isMaster;
+  const role: 'admin' | 'broker' = isMasterOrFirst ? 'admin' : 'broker';
+  const status: 'pending' | 'active' | 'blocked' = isMasterOrFirst ? 'active' : 'pending';
 
   const newUser: DbUser = {
     id: userId,
@@ -331,6 +343,7 @@ export async function registerUser(params: {
     password_hash: passwordHash,
     salt: salt,
     role: role,
+    status: status,
     created_at: now
   };
 
@@ -346,19 +359,25 @@ export async function registerUser(params: {
 
   writeDatabase(db);
 
+  const message = status === 'pending'
+    ? 'Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.'
+    : 'Usuário cadastrado e ativado com sucesso!';
+
   return {
     success: true,
+    message,
     user: {
       id: newUser.id,
       name: newUser.name,
       email: newUser.email,
       role: newUser.role,
+      status: newUser.status,
       created_at: newUser.created_at
     }
   };
 }
 
-export async function loginUser(email: string, password: string): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; isGoogleConnected?: boolean; error?: string }> {
+export async function loginUser(email: string, password: string): Promise<{ success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; isGoogleConnected?: boolean; isPending?: boolean; isBlocked?: boolean; error?: string }> {
   const user = findUserByEmail(email);
   if (!user) {
     return { success: false, error: 'E-mail ou senha incorretos.' };
@@ -369,6 +388,25 @@ export async function loginUser(email: string, password: string): Promise<{ succ
     return { success: false, error: 'E-mail ou senha incorretos.' };
   }
 
+  const userStatus = user.status || 'active';
+
+  // Enforce status checks
+  if (userStatus === 'pending') {
+    return {
+      success: false,
+      isPending: true,
+      error: 'Sua conta foi criada e está aguardando aprovação do administrador. Entre em contato para liberação.'
+    };
+  }
+
+  if (userStatus === 'blocked') {
+    return {
+      success: false,
+      isBlocked: true,
+      error: 'Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.'
+    };
+  }
+
   return {
     success: true,
     user: {
@@ -376,6 +414,7 @@ export async function loginUser(email: string, password: string): Promise<{ succ
       name: user.name,
       email: user.email,
       role: user.role,
+      status: user.status || 'active',
       created_at: user.created_at,
       google_email: user.google_email,
       google_connected_at: user.google_connected_at
@@ -572,6 +611,106 @@ export function revokeInviteCode(adminUserId: string, code: string): { success: 
   }
 
   db.invite_codes[codeNorm].is_active = 0;
+  writeDatabase(db);
+  return { success: true };
+}
+
+// User Management (for Admin)
+export function listUsers(adminUserId?: string): { success: boolean; users?: Array<Omit<DbUser, 'password_hash' | 'salt'>>; error?: string } {
+  const db = readDatabase();
+  
+  if (adminUserId) {
+    const admin = db.users[adminUserId];
+    if (!admin || admin.role !== 'admin') {
+      return { success: false, error: 'Acesso restrito a administradores.' };
+    }
+  }
+
+  const usersList = Object.values(db.users || {}).map(u => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    status: u.status || 'active',
+    created_at: u.created_at,
+    google_email: u.google_email,
+    google_connected_at: u.google_connected_at,
+    isGoogleConnected: !!(u.google_access_token || u.google_refresh_token)
+  }));
+
+  usersList.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  return { success: true, users: usersList };
+}
+
+export function updateUserStatus(
+  adminUserId: string,
+  targetUserId: string,
+  newStatus: 'pending' | 'active' | 'blocked'
+): { success: boolean; user?: Omit<DbUser, 'password_hash' | 'salt'>; error?: string } {
+  const db = readDatabase();
+  const admin = db.users[adminUserId];
+
+  if (!admin || admin.role !== 'admin') {
+    return { success: false, error: 'Apenas administradores podem alterar o status de usuários.' };
+  }
+
+  const targetUser = db.users[targetUserId];
+  if (!targetUser) {
+    return { success: false, error: 'Usuário não encontrado.' };
+  }
+
+  // Prevent admin from blocking themselves
+  if (adminUserId === targetUserId && newStatus !== 'active') {
+    return { success: false, error: 'Você não pode desativar ou bloquear sua própria conta de administrador.' };
+  }
+
+  targetUser.status = newStatus;
+  writeDatabase(db);
+
+  return {
+    success: true,
+    user: {
+      id: targetUser.id,
+      name: targetUser.name,
+      email: targetUser.email,
+      role: targetUser.role,
+      status: targetUser.status,
+      created_at: targetUser.created_at
+    }
+  };
+}
+
+export function deleteUser(
+  adminUserId: string,
+  targetUserId: string
+): { success: boolean; error?: string } {
+  const db = readDatabase();
+  const admin = db.users[adminUserId];
+
+  if (!admin || admin.role !== 'admin') {
+    return { success: false, error: 'Apenas administradores podem excluir usuários.' };
+  }
+
+  if (adminUserId === targetUserId) {
+    return { success: false, error: 'Você não pode excluir sua própria conta de administrador.' };
+  }
+
+  if (!db.users[targetUserId]) {
+    return { success: false, error: 'Usuário não encontrado.' };
+  }
+
+  delete db.users[targetUserId];
+
+  // Clean up any invite codes used by this user
+  for (const inv of Object.values(db.invite_codes || {})) {
+    if (inv.used_by === targetUserId) {
+      inv.used_by = null;
+      inv.used_at = null;
+      inv.is_active = 1;
+    }
+  }
+
   writeDatabase(db);
   return { success: true };
 }

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   role TEXT DEFAULT 'broker', -- 'admin' ou 'broker'
+  status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'active', 'blocked'
   google_access_token TEXT,
   google_refresh_token TEXT,
   google_token_expiry INTEGER,
