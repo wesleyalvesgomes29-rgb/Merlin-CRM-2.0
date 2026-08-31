@@ -1511,7 +1511,7 @@ export default {
 
       try {
         const result = await env.DB.prepare(
-          "SELECT id, name, email, role, status, created_at, google_email, google_connected_at FROM users ORDER BY created_at DESC"
+          "SELECT id, name, email, phone, role, status, created_at, google_email, google_connected_at FROM users ORDER BY created_at DESC"
         ).all();
 
         const usersList = (result.results || []).map((u: any) => ({
@@ -1524,15 +1524,25 @@ export default {
           users: usersList,
         });
       } catch (err: any) {
-        // Fallback if status column is not yet present
-        const result = await env.DB.prepare(
-          "SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC"
-        ).all();
+        // Fallback if some column is not yet present
+        try {
+          const result = await env.DB.prepare(
+            "SELECT id, name, email, phone, role, status, created_at FROM users ORDER BY created_at DESC"
+          ).all();
+          return jsonResponse({
+            success: true,
+            users: (result.results || []).map((u: any) => ({ ...u, status: u.status || "active" })),
+          });
+        } catch {
+          const result = await env.DB.prepare(
+            "SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC"
+          ).all();
 
-        return jsonResponse({
-          success: true,
-          users: (result.results || []).map((u: any) => ({ ...u, status: "active" })),
-        });
+          return jsonResponse({
+            success: true,
+            users: (result.results || []).map((u: any) => ({ ...u, status: "active" })),
+          });
+        }
       }
     }
 
