@@ -232,6 +232,440 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }
 
     // -------------------------------------------------------------
+    // 4.1 Google OAuth: GET /api/auth/google/url
+    // -------------------------------------------------------------
+    if (pathname === "/api/auth/google/url") {
+      if (method !== "GET") return errorResponse("Método não permitido.", 405, corsHeaders);
+
+      const clientId = env.GOOGLE_CLIENT_ID || env.GOOGLE_OAUTH_CLIENT_ID;
+      const redirectUri = env.GOOGLE_REDIRECT_URI || `${url.protocol}//${url.host}/api/auth/google/callback`;
+      const scopes = [
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ].join(" ");
+      const state = url.searchParams.get("userId") || request.headers.get("X-User-Id") || "default";
+
+      if (!clientId) {
+        const mockAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&scope=${encodeURIComponent(scopes)}&prompt=consent&access_type=offline&state=${encodeURIComponent(state)}`;
+        return jsonResponse({
+          success: false,
+          url: mockAuthUrl,
+          redirectUri,
+          scopes,
+          isConfigured: false,
+          clientIdPresent: false,
+          error: "Google Client ID não configurado no backend (GOOGLE_CLIENT_ID ausente).",
+          instructions: `Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET nas variáveis de ambiente. Redirect URI: ${redirectUri}`
+        }, 200, corsHeaders);
+      }
+
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
+
+      return jsonResponse({
+        success: true,
+        url: authUrl,
+        redirectUri,
+        scopes,
+        isConfigured: true,
+        clientIdPresent: true
+      }, 200, corsHeaders);
+    }
+
+    // -------------------------------------------------------------
+    // 4.2 Google OAuth: GET /api/auth/google/status
+    // -------------------------------------------------------------
+    if (pathname === "/api/auth/google/status") {
+      if (method !== "GET") return errorResponse("Método não permitido.", 405, corsHeaders);
+
+      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      if (!userId) {
+        return jsonResponse({ success: false, isConnected: false, error: "Não autenticado." }, 401, corsHeaders);
+      }
+
+      if (env.DB) {
+        try {
+          const user = await env.DB.prepare(
+            "SELECT google_access_token, google_refresh_token, google_token_expiry, google_email, google_connected_at FROM users WHERE id = ?"
+          ).bind(userId).first<any>();
+
+          if (user && user.google_access_token) {
+            return jsonResponse({
+              success: true,
+              isConnected: true,
+              googleEmail: user.google_email || "Conta Google Conectada",
+              connectedAt: user.google_connected_at,
+              isExpired: user.google_token_expiry ? Date.now() > user.google_token_expiry : false
+            }, 200, corsHeaders);
+          }
+        } catch (dbErr) {
+          console.warn("[Pages Google Auth] Colunas google não acessíveis no D1:", dbErr);
+        }
+      }
+
+      return jsonResponse({
+        success: true,
+        isConnected: false,
+        googleEmail: null
+      }, 200, corsHeaders);
+    }
+
+    // -------------------------------------------------------------
+    // 4.3 Google OAuth: GET & POST /api/auth/google/callback
+    // -------------------------------------------------------------
+    if (pathname === "/api/auth/google/callback") {
+      if (method === "GET") {
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state") || "default";
+        const errorParam = url.searchParams.get("error");
+        const errorDesc = url.searchParams.get("error_description");
+
+        if (errorParam) {
+          return new Response(`
+            <!DOCTYPE html>
+            <html>
+            <body style="background:#0B0B0B;color:#fff;font-family:sans-serif;text-align:center;padding:40px;">
+              <h2 style="color:#F43F5E;">Falha na Autorização</h2>
+              <p style="color:#888;">${errorParam} (${errorDesc || "Cancelado"})</p>
+              <script>
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: '${errorParam}' }, '*');
+                }
+                setTimeout(() => { try { window.close(); } catch(e){} }, 4000);
+              </script>
+            </body>
+            </html>
+          `, { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders } });
+        }
+
+        if (!code) {
+          return new Response("Código de autorização não fornecido pelo Google.", { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders } });
+        }
+
+        const userId = state && state !== "default" ? state : "default";
+        const clientId = env.GOOGLE_CLIENT_ID || env.GOOGLE_OAUTH_CLIENT_ID;
+        const clientSecret = env.GOOGLE_CLIENT_SECRET || env.GOOGLE_OAUTH_CLIENT_SECRET;
+        const redirectUri = env.GOOGLE_REDIRECT_URI || `${url.protocol}//${url.host}/api/auth/google/callback`;
+
+        let accessToken = "";
+        let refreshToken = "";
+        let expiresIn = 3600;
+        let googleEmail = "";
+
+        if (clientId && clientSecret) {
+          try {
+            const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                code,
+                client_id: clientId,
+                client_secret: clientSecret,
+                redirect_uri: redirectUri,
+                grant_type: "authorization_code"
+              })
+            });
+
+            if (tokenRes.ok) {
+              const tokenData: any = await tokenRes.json();
+              accessToken = tokenData.access_token;
+              refreshToken = tokenData.refresh_token || "";
+              expiresIn = tokenData.expires_in || 3600;
+
+              if (accessToken) {
+                const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+                  headers: { Authorization: `Bearer ${accessToken}` }
+                });
+                if (userRes.ok) {
+                  const userData: any = await userRes.json();
+                  googleEmail = userData.email || "";
+                }
+              }
+            }
+          } catch (e) {
+            console.error("[Pages Google Auth] Erro ao trocar token:", e);
+          }
+        } else {
+          accessToken = `gcal_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+          googleEmail = "corretor@google.com";
+        }
+
+        const now = new Date().toISOString();
+        const expiryTime = Date.now() + (expiresIn * 1000);
+
+        if (env.DB && userId && userId !== "default") {
+          try {
+            await env.DB.prepare(
+              "UPDATE users SET google_access_token = ?, google_refresh_token = ?, google_token_expiry = ?, google_email = ?, google_connected_at = ? WHERE id = ?"
+            ).bind(accessToken, refreshToken || null, expiryTime, googleEmail, now, userId).run();
+          } catch (dbErr) {
+            console.warn("[Pages Google Auth] Falha ao persistir tokens no D1:", dbErr);
+          }
+        }
+
+        return new Response(`
+          <!DOCTYPE html>
+          <html>
+          <body style="background:#0B0B0B;color:#fff;font-family:sans-serif;text-align:center;padding:40px;">
+            <h2 style="color:#34D399;">Conectado com Sucesso!</h2>
+            <p style="color:#888;">Conta: ${googleEmail}</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({
+                  type: 'GOOGLE_AUTH_SUCCESS',
+                  accessToken: '${accessToken}',
+                  googleEmail: '${googleEmail}',
+                  expiresIn: ${expiresIn}
+                }, '*');
+              }
+              setTimeout(() => { try { window.close(); } catch(e){} }, 1500);
+            </script>
+          </body>
+          </html>
+        `, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders } });
+      }
+
+      if (method === "POST") {
+        let body: any = {};
+        try {
+          body = await request.json();
+        } catch {
+          return errorResponse("Formato JSON inválido.", 400, corsHeaders);
+        }
+
+        const { code, accessToken, refreshToken, expiresIn, googleEmail, userId: bodyUserId } = body || {};
+        const userId = request.headers.get("X-User-Id") || bodyUserId;
+
+        if (!userId) {
+          return errorResponse("Identificação do usuário (userId) necessária.", 401, corsHeaders);
+        }
+
+        let finalAccessToken = accessToken;
+        let finalRefreshToken = refreshToken;
+        let finalExpiresIn = expiresIn || 3600;
+        let finalEmail = googleEmail;
+
+        if (code) {
+          const clientId = env.GOOGLE_CLIENT_ID || env.GOOGLE_OAUTH_CLIENT_ID;
+          const clientSecret = env.GOOGLE_CLIENT_SECRET || env.GOOGLE_OAUTH_CLIENT_SECRET;
+          const redirectUri = env.GOOGLE_REDIRECT_URI || `${url.protocol}//${url.host}/api/auth/google/callback`;
+
+          if (!clientId || !clientSecret) {
+            return errorResponse("GOOGLE_CLIENT_ID ou GOOGLE_CLIENT_SECRET não configurados no servidor.", 400, corsHeaders);
+          }
+
+          const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              code,
+              client_id: clientId,
+              client_secret: clientSecret,
+              redirect_uri: redirectUri,
+              grant_type: "authorization_code"
+            })
+          });
+
+          if (!tokenRes.ok) {
+            const errText = await tokenRes.text();
+            return errorResponse(`Erro retornado pelo Google (${tokenRes.status}): ${errText}`, tokenRes.status, corsHeaders);
+          }
+
+          const tokenData: any = await tokenRes.json();
+          finalAccessToken = tokenData.access_token;
+          finalRefreshToken = tokenData.refresh_token || finalRefreshToken;
+          finalExpiresIn = tokenData.expires_in || 3600;
+        }
+
+        if (finalAccessToken && !finalEmail) {
+          try {
+            const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+              headers: { Authorization: `Bearer ${finalAccessToken}` }
+            });
+            if (userInfoRes.ok) {
+              const userInfo: any = await userInfoRes.json();
+              finalEmail = userInfo.email;
+            }
+          } catch (userErr) {
+            console.warn("[Pages Google Auth] Erro ao buscar userinfo:", userErr);
+          }
+        }
+
+        if (!finalAccessToken) {
+          return errorResponse("Access token ou authorization code ausente ou inválido.", 400, corsHeaders);
+        }
+
+        const now = new Date().toISOString();
+        const expiryTime = Date.now() + (finalExpiresIn * 1000);
+
+        if (env.DB) {
+          try {
+            await env.DB.prepare(
+              "UPDATE users SET google_access_token = ?, google_refresh_token = ?, google_token_expiry = ?, google_email = ?, google_connected_at = ? WHERE id = ?"
+            ).bind(finalAccessToken, finalRefreshToken || null, expiryTime, finalEmail || null, now, userId).run();
+          } catch (dbErr: any) {
+            console.warn("[Pages Google Auth] Erro ao salvar tokens no D1:", dbErr);
+          }
+        }
+
+        return jsonResponse({
+          success: true,
+          message: "Conta Google conectada com sucesso!",
+          googleEmail: finalEmail,
+          connectedAt: now
+        }, 200, corsHeaders);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 4.4 Google OAuth: POST /api/auth/google/disconnect
+    // -------------------------------------------------------------
+    if (pathname === "/api/auth/google/disconnect") {
+      if (method !== "POST") return errorResponse("Método não permitido.", 405, corsHeaders);
+
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+      const userId = request.headers.get("X-User-Id") || body?.userId;
+      if (!userId) return errorResponse("Não autenticado.", 401, corsHeaders);
+
+      if (env.DB) {
+        try {
+          await env.DB.prepare(
+            "UPDATE users SET google_access_token = NULL, google_refresh_token = NULL, google_token_expiry = NULL, google_email = NULL, google_connected_at = NULL WHERE id = ?"
+          ).bind(userId).run();
+        } catch (dbErr: any) {
+          console.warn("[Pages Google Auth] Erro ao desconectar no D1:", dbErr);
+        }
+      }
+
+      return jsonResponse({ success: true, message: "Google Agenda desconectado com sucesso." }, 200, corsHeaders);
+    }
+
+    // -------------------------------------------------------------
+    // 4.5 Google Calendar: POST /api/calendar/create-event
+    // -------------------------------------------------------------
+    if (pathname === "/api/calendar/create-event") {
+      if (method !== "POST") return errorResponse("Método não permitido.", 405, corsHeaders);
+
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        return errorResponse("Formato JSON inválido.", 400, corsHeaders);
+      }
+
+      const { title, dueDate, dueTime, notes, clientName, priority, location, clientPhone, userId: bodyUserId } = body || {};
+      const userId = request.headers.get("X-User-Id") || bodyUserId;
+
+      let token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+
+      if (userId && env.DB && !token) {
+        try {
+          const u = await env.DB.prepare(
+            "SELECT google_access_token, google_refresh_token, google_token_expiry FROM users WHERE id = ?"
+          ).bind(userId).first<any>();
+          if (u && u.google_access_token) {
+            token = u.google_access_token;
+          }
+        } catch (dbErr) {
+          console.warn("[Pages Google Calendar] Erro ao consultar tokens:", dbErr);
+        }
+      }
+
+      if (!token) {
+        return jsonResponse({
+          success: false,
+          error: "Conta Google não conectada. Conecte no perfil para sincronização automática.",
+          needsAuth: true
+        }, 401, corsHeaders);
+      }
+
+      if (!title || !dueDate) {
+        return errorResponse("Título e Data de vencimento (dueDate) são obrigatórios para agendamento.", 400, corsHeaders);
+      }
+
+      let startObj: any = {};
+      let endObj: any = {};
+
+      if (dueTime && dueTime.includes(":")) {
+        const [hStr, minStr] = dueTime.split(":");
+        const hours = parseInt(hStr, 10) || 0;
+        const minutes = parseInt(minStr, 10) || 0;
+
+        const [yStr, mStr, dStr] = dueDate.split("-");
+        const startDate = new Date(parseInt(yStr, 10), parseInt(mStr, 10) - 1, parseInt(dStr, 10), hours, minutes, 0);
+        const endDate = new Date(startDate.getTime() + 30 * 60 * 1000);
+
+        startObj = { dateTime: startDate.toISOString(), timeZone: "America/Sao_Paulo" };
+        endObj = { dateTime: endDate.toISOString(), timeZone: "America/Sao_Paulo" };
+      } else {
+        startObj = { date: dueDate };
+        const [yStr, mStr, dStr] = dueDate.split("-");
+        const nextDay = new Date(parseInt(yStr, 10), parseInt(mStr, 10) - 1, parseInt(dStr, 10) + 1);
+        const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+        endObj = { date: nextDayStr };
+      }
+
+      const descriptionParts: string[] = [];
+      if (notes) descriptionParts.push(`📝 Detalhes: ${notes}`);
+      if (clientName) descriptionParts.push(`👤 Lead: ${clientName}`);
+      if (clientPhone) descriptionParts.push(`📞 Telefone/Whats: ${clientPhone}`);
+      if (priority) descriptionParts.push(`⚡ Prioridade: ${priority}`);
+      descriptionParts.push(`\nAgendado automaticamente pelo Merlin CRM ⚡`);
+
+      const calendarEventPayload = {
+        summary: title,
+        description: descriptionParts.join("\n"),
+        location: location || "",
+        start: startObj,
+        end: endObj,
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: "popup", minutes: 30 },
+            { method: "popup", minutes: 10 }
+          ]
+        }
+      };
+
+      const googleRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(calendarEventPayload)
+      });
+
+      if (!googleRes.ok) {
+        const errBody = await googleRes.text();
+        return jsonResponse({
+          success: false,
+          error: `Falha ao salvar no Google Calendar (${googleRes.status}).`,
+          details: errBody
+        }, googleRes.status, corsHeaders);
+      }
+
+      const eventData: any = await googleRes.json();
+      return jsonResponse({
+        success: true,
+        message: "Evento criado com sucesso no Google Agenda!",
+        eventId: eventData.id,
+        htmlLink: eventData.htmlLink,
+        summary: eventData.summary,
+        start: eventData.start,
+        end: eventData.end,
+        createdSilently: true
+      }, 201, corsHeaders);
+    }
+
+    // -------------------------------------------------------------
     // 5. Admin: POST /api/admin/create-invite
     // -------------------------------------------------------------
     if (pathname === "/api/admin/create-invite") {

@@ -63,19 +63,23 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({
       const localInfo = getStoredGoogleAccountInfo();
 
       if (user?.id) {
-        const res = await fetch(`/api/auth/google/status?userId=${user.id}`, {
-          headers: { 'X-User-Id': user.id }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.isConnected) {
-            setIsConnected(true);
-            setConnectedEmail(data.googleEmail || user.email || 'Conta Google Conectada');
-            setConnectedAt(data.connectedAt);
-            onStatusChange?.(true);
-            setIsLoading(false);
-            return;
+        try {
+          const res = await fetch(`/api/auth/google/status?userId=${encodeURIComponent(user.id)}`, {
+            headers: { 'X-User-Id': user.id }
+          });
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data?.isConnected) {
+              setIsConnected(true);
+              setConnectedEmail(data.googleEmail || user.email || 'Conta Google Conectada');
+              setConnectedAt(data.connectedAt);
+              onStatusChange?.(true);
+              setIsLoading(false);
+              return;
+            }
           }
+        } catch (apiErr) {
+          console.warn('[GoogleModal] Status API não respondeu com JSON:', apiErr);
         }
       }
 
@@ -99,11 +103,13 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({
   // Fetch backend Google configuration diagnostics
   const fetchDiagnostics = async () => {
     try {
-      const res = await fetch(`/api/auth/google/url?userId=${user?.id || 'default'}`);
+      const res = await fetch(`/api/auth/google/url?userId=${encodeURIComponent(user?.id || 'default')}`);
       if (res.ok) {
-        const data = await res.json();
-        setDetectedRedirectUri(data.redirectUri || `${window.location.origin}/api/auth/google/callback`);
-        setIsClientIdConfigured(data.isConfigured || false);
+        const data = await res.json().catch(() => null);
+        if (data) {
+          setDetectedRedirectUri(data.redirectUri || `${window.location.origin}/api/auth/google/callback`);
+          setIsClientIdConfigured(data.isConfigured || false);
+        }
       }
     } catch (e) {
       setDetectedRedirectUri(`${window.location.origin}/api/auth/google/callback`);
@@ -151,14 +157,14 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({
 
     try {
       // Solicitar URL de autorização dinâmica do backend
-      const res = await fetch(`/api/auth/google/url?userId=${user?.id || 'default'}`);
-      const data = await res.json();
+      const res = await fetch(`/api/auth/google/url?userId=${encodeURIComponent(user?.id || 'default')}`);
+      const data = await res.json().catch(() => ({}));
 
-      setDetectedRedirectUri(data.redirectUri || `${window.location.origin}/api/auth/google/callback`);
-      setIsClientIdConfigured(data.isConfigured);
+      setDetectedRedirectUri(data?.redirectUri || `${window.location.origin}/api/auth/google/callback`);
+      setIsClientIdConfigured(data?.isConfigured ?? false);
 
       if (!res.ok) {
-        throw new Error(data.error || 'Falha ao comunicar com o servidor.');
+        throw new Error(data?.error || `Falha ao comunicar com o servidor (${res.status}).`);
       }
 
       // Se o backend informou que GOOGLE_CLIENT_ID não está configurado
