@@ -384,46 +384,82 @@ export function saveUserGoogleTokens(userId: string, tokens: {
   expiresIn?: number;
   googleEmail?: string;
 }): { success: boolean; error?: string } {
-  const db = readDatabase();
-  const user = db.users?.[userId];
-  if (!user) {
-    return { success: false, error: 'Usuário não encontrado.' };
-  }
+  try {
+    const db = readDatabase();
+    if (!db.users) {
+      db.users = {};
+    }
 
-  const now = Date.now();
-  if (tokens.accessToken) {
-    user.google_access_token = tokens.accessToken;
-  }
-  if (tokens.refreshToken) {
-    user.google_refresh_token = tokens.refreshToken;
-  }
-  if (tokens.expiresIn) {
-    user.google_token_expiry = now + (tokens.expiresIn * 1000);
-  }
-  if (tokens.googleEmail) {
-    user.google_email = tokens.googleEmail;
-  }
-  user.google_connected_at = new Date().toISOString();
+    // Try finding user by ID or by email
+    let user = db.users[userId];
+    if (!user) {
+      const foundEntry = Object.values(db.users).find((u: DbUser) => u.id === userId || u.email === userId);
+      if (foundEntry) {
+        user = foundEntry;
+      }
+    }
 
-  writeDatabase(db);
-  return { success: true };
+    if (!user) {
+      console.warn(`[Merlin DB] Usuário ${userId} não encontrado para salvar tokens Google.`);
+      return { success: false, error: 'Usuário não encontrado na base de dados.' };
+    }
+
+    const now = Date.now();
+    if (tokens.accessToken) {
+      user.google_access_token = tokens.accessToken;
+    }
+    if (tokens.refreshToken) {
+      user.google_refresh_token = tokens.refreshToken;
+    }
+    if (tokens.expiresIn) {
+      user.google_token_expiry = now + (tokens.expiresIn * 1000);
+    }
+    if (tokens.googleEmail) {
+      user.google_email = tokens.googleEmail;
+    }
+    user.google_connected_at = new Date().toISOString();
+
+    writeDatabase(db);
+    console.log(`[Merlin DB] Tokens Google persistidos com sucesso para o usuário ${user.email} (${user.id}).`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[Merlin DB] Falha ao persistir tokens Google:', error);
+    return { success: false, error: error.message || 'Falha ao salvar tokens no banco de dados.' };
+  }
 }
 
 export function removeUserGoogleTokens(userId: string): { success: boolean; error?: string } {
-  const db = readDatabase();
-  const user = db.users?.[userId];
-  if (!user) {
-    return { success: false, error: 'Usuário não encontrado.' };
+  try {
+    const db = readDatabase();
+    if (!db.users) {
+      return { success: true };
+    }
+
+    let user = db.users[userId];
+    if (!user) {
+      const foundEntry = Object.values(db.users).find((u: DbUser) => u.id === userId || u.email === userId);
+      if (foundEntry) {
+        user = foundEntry;
+      }
+    }
+
+    if (!user) {
+      return { success: false, error: 'Usuário não encontrado.' };
+    }
+
+    user.google_access_token = null;
+    user.google_refresh_token = null;
+    user.google_token_expiry = null;
+    user.google_email = null;
+    user.google_connected_at = null;
+
+    writeDatabase(db);
+    console.log(`[Merlin DB] Conexão Google removida para usuário ${user.email} (${user.id}).`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[Merlin DB] Erro ao remover tokens Google:', error);
+    return { success: false, error: error.message || 'Erro ao remover tokens do banco de dados.' };
   }
-
-  user.google_access_token = null;
-  user.google_refresh_token = null;
-  user.google_token_expiry = null;
-  user.google_email = null;
-  user.google_connected_at = null;
-
-  writeDatabase(db);
-  return { success: true };
 }
 
 export function getUserGoogleTokens(userId: string): {
@@ -434,21 +470,37 @@ export function getUserGoogleTokens(userId: string): {
   connectedAt?: string | null;
   isConnected: boolean;
 } {
-  const db = readDatabase();
-  const user = db.users?.[userId];
-  if (!user) {
+  try {
+    const db = readDatabase();
+    if (!db.users) {
+      return { isConnected: false };
+    }
+
+    let user = db.users[userId];
+    if (!user) {
+      const foundEntry = Object.values(db.users).find((u: DbUser) => u.id === userId || u.email === userId);
+      if (foundEntry) {
+        user = foundEntry;
+      }
+    }
+
+    if (!user) {
+      return { isConnected: false };
+    }
+
+    const isConnected = !!(user.google_access_token || user.google_refresh_token);
+    return {
+      accessToken: user.google_access_token,
+      refreshToken: user.google_refresh_token,
+      tokenExpiry: user.google_token_expiry,
+      googleEmail: user.google_email,
+      connectedAt: user.google_connected_at,
+      isConnected
+    };
+  } catch (error) {
+    console.error('[Merlin DB] Erro ao consultar tokens Google:', error);
     return { isConnected: false };
   }
-
-  const isConnected = !!(user.google_access_token || user.google_refresh_token);
-  return {
-    accessToken: user.google_access_token,
-    refreshToken: user.google_refresh_token,
-    tokenExpiry: user.google_token_expiry,
-    googleEmail: user.google_email,
-    connectedAt: user.google_connected_at,
-    isConnected
-  };
 }
 
 // Invite Code Management (for Admin)
