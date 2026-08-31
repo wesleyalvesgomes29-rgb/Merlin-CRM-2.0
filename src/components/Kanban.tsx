@@ -10,7 +10,8 @@ import {
   ChevronLeft,
   Settings,
   MoveRight,
-  Eye
+  Eye,
+  Brain
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -282,7 +283,17 @@ export default function Kanban({
 
                         {/* Footer details / action buttons */}
                         <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-[#2A2A2A] text-[10px] text-slate-400 dark:text-[#888888]">
-                          <span>Conversas: <strong className="text-slate-700 dark:text-[#E5E5E5]">{client.contactCount}</strong></span>
+                          <div className="flex items-center gap-1.5">
+                            <span>Conversas: <strong className="text-slate-700 dark:text-[#E5E5E5]">{client.contactCount}</strong></span>
+                            {client.secondBrainSummary && (
+                              <span 
+                                title="Second Brain: Síntese comportamental pronta"
+                                className="p-0.5 bg-[#FD7A00]/15 text-[#FD7A00] rounded-sm flex items-center"
+                              >
+                                <Brain className="h-2.5 w-2.5" />
+                              </span>
+                            )}
+                          </div>
                           
                           <button
                             onClick={() => onSelectClient(client.id)}

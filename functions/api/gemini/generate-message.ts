@@ -45,7 +45,7 @@ export async function onRequest(context: {
     }
 
     const body: any = await request.json();
-    const { clientName, clientInterest, clientNotes, goal, clientStatus } = body;
+    const { clientName, clientInterest, clientNotes, goal, clientStatus, secondBrainSummary } = body;
 
     if (!clientName) {
       return new Response(
@@ -60,9 +60,21 @@ export async function onRequest(context: {
       );
     }
 
-    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho.
+    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho com metodologia humanizada do Second Brain.
 Seu objetivo é criar mensagens de abordagem curtas, humanas, extremamente persuasivas e amigáveis para envio via WhatsApp ou Email.
-Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão genuína. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+
+    let secondBrainContext = "";
+    if (secondBrainSummary && typeof secondBrainSummary === "object") {
+      secondBrainContext = `
+- Síntese Comportamental do Lead (Second Brain):
+  * Dor Emocional / Momento: ${secondBrainSummary.emotionalPain || "Não identificada"}
+  * Principal Objeção: ${secondBrainSummary.keyObjection || "Não identificada"}
+  * Critério de Decisão: ${secondBrainSummary.decisionCriteria || "Não especificado"}
+  * Ângulo Recomendado: ${secondBrainSummary.recommendedAngle || "Abordagem consultiva"}
+  * Nível de Urgência: ${secondBrainSummary.urgencyLevel || "Média"}
+*Diretriz Second Brain*: Use esses pontos comportamentais para criar um gancho natural, tratando as objeções de forma sutil e empática sem parecer vendedor insistente.`;
+    }
 
     const userPrompt = `Crie um script personalizado de abordagem rápida para o seguinte cliente:
 - Nome do Cliente: ${clientName}
@@ -70,6 +82,7 @@ Evite textos excessivamente formais, robóticos, artificiais ou repletos de jarg
 - Perfil/Notas do Cliente: ${clientNotes || "Sem observações adicionais"}
 - Etapa atual do Funil: ${clientStatus || "Lead Novo"}
 - Objetivo da mensagem: ${goal || "Fazer um contato inicial para entender as necessidades"}
+${secondBrainContext}
 
 Instruções Adicionais:
 - Escreva a mensagem em português do Brasil.

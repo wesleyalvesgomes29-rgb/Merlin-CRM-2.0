@@ -15,7 +15,11 @@ import {
   revokeInviteCode,
   saveUserGoogleTokens,
   removeUserGoogleTokens,
-  getUserGoogleTokens
+  getUserGoogleTokens,
+  saveClientSecondBrainSummary,
+  getBrokerMemory,
+  saveBrokerMemory,
+  readDatabase
 } from "./server/db";
 
 dotenv.config();
@@ -1601,18 +1605,144 @@ function extractStructuredAction(rawText: string): { cleanText: string; action: 
   return { cleanText: rawText, action: null };
 }
 
+// API Route: Second Brain Lead Behavioral Synthesis
+app.post("/api/gemini/second-brain/synthesize", async (req, res) => {
+  try {
+    const { clientId, clientData } = req.body || {};
+
+    if (!clientId && !clientData) {
+      return res.status(400).json({ error: "O clientId ou dados do lead são obrigatórios." });
+    }
+
+    const db = readDatabase();
+    let client = clientId ? db.clients[clientId] : null;
+    if (!client && clientData) {
+      client = clientData;
+    }
+
+    if (!client) {
+      return res.status(404).json({ error: "Cliente não encontrado no CRM." });
+    }
+
+    // Obter comentários e histórico
+    const commentsList = Object.values(db.client_comments || {})
+      .filter((cm: any) => cm.clientId === client.id)
+      .map((cm: any) => `- [${cm.createdAt || cm.date || 'Data'}] ${cm.text}`)
+      .join("\n");
+
+    const clientComments = (client.comments && Array.isArray(client.comments))
+      ? client.comments.map((cm: any) => `- [${cm.date || 'Data'}] ${cm.text}`).join("\n")
+      : commentsList;
+
+    const tagsList = Array.isArray(client.tags) ? client.tags.join(", ") : (client.tags || "Nenhuma");
+
+    const systemPrompt = `Você é o Merlin Second Brain, o módulo de inteligência comportamental, psicologia de vendas imobiliárias e metodologia comercial humanizada.
+Sua missão é analisar profundamente o histórico do lead, suas conversas, perfil, dores, hesitações e momento de vida para sintetizar um dossiê tático para o corretor.
+
+Você DEVE responder ESTRITAMENTE com um objeto JSON válido no seguinte formato exato (sem texto antes ou depois):
+{
+  "emotionalPain": "string (motivação profunda e momento de vida - ex: busca estabilidade para os filhos, cansado de pagar aluguel caro, deseja rentabilidade segura)",
+  "keyObjection": "string (principal barreira, medo ou receio percebido - ex: receio do valor da parcela, dúvida entre duas localizações, insegurança quanto ao prazo de entrega)",
+  "decisionCriteria": "string (o fator que define o fechamento - ex: entrada parcelada, vaga de garagem coberta, proximidade com o trabalho)",
+  "recommendedAngle": "string (gancho persuasivo ideal e tom recomendado para a próxima abordagem)",
+  "suggestedNextAction": "string (próximo passo prático e recomendação tática clara para o corretor)",
+  "urgencyLevel": "Alta" | "Média" | "Baixa"
+}`;
+
+    const userPrompt = `Analise os dados deste lead imobiliário:
+- Nome: ${client.name}
+- Etapa do Funil: ${client.status || "Lead Novo"}
+- Empreendimento de Interesse: ${client.empreendimento || "Não especificado"}
+- Origem do Lead: ${client.origem || "Não informada"}
+- Perfil & Notas Cadastradas: ${client.notes || "Sem notas adicionais"}
+- Etiquetas/Tags: ${tagsList || "Nenhuma"}
+- Histórico de Atendimentos e Conversas:
+${clientComments || "Nenhum atendimento registrado ainda."}
+
+Gere o JSON de síntese comportamental do Second Brain:`;
+
+    const now = new Date().toISOString();
+
+    const generateFallbackSynthesis = () => {
+      const isUrgent = client.status === "Proposta" || client.status === "Documentação" || client.status === "Visitou";
+      const isLow = client.status === "Perdido";
+      const urgency: 'Alta' | 'Média' | 'Baixa' = isUrgent ? 'Alta' : isLow ? 'Baixa' : 'Média';
+      
+      const emp = client.empreendimento || "o imóvel de interesse";
+      return {
+        emotionalPain: client.notes ? `Necessidade de segurança e adequação ao momento de vida: ${client.notes.slice(0, 120)}` : `Busca por realização patrimonial e conquista de um novo padrão de vida em ${emp}.`,
+        keyObjection: client.comments?.length ? `Hesitação com relação a fluxo de pagamento ou necessidade de alinhamento familiar.` : `Incerteza sobre valores de parcelas ou melhores opções de financiamento.`,
+        decisionCriteria: `Transparência nos custos, facilidade na entrada e boa localização.`,
+        recommendedAngle: `Abordagem acolhedora, focada em apresentar uma simulação personalizada e esclarecer dúvidas sem pressão.`,
+        suggestedNextAction: `Fazer contato via WhatsApp apresentando novidades de ${emp} e sugerir um alinhamento rápido.`,
+        urgencyLevel: urgency
+      };
+    };
+
+    let summary: any;
+    try {
+      const ai = getGoogleGenAI();
+      const rawText = await generateWithFallbackAndTimeout(ai, userPrompt, systemPrompt, 0.4);
+      
+      // Limpa possíveis blocos markdown ```json ... ```
+      let cleaned = rawText.replace(/```json\s*/gi, '').replace(/```\s*$/gi, '').trim();
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+      }
+      
+      summary = JSON.parse(cleaned);
+      if (!summary.emotionalPain || !summary.keyObjection || !summary.recommendedAngle) {
+        throw new Error("Estrutura JSON incompleta.");
+      }
+    } catch (aiErr: any) {
+      console.warn("[Merlin Second Brain] Fallback de síntese acionado:", aiErr.message);
+      summary = generateFallbackSynthesis();
+    }
+
+    if (clientId) {
+      saveClientSecondBrainSummary(clientId, summary, now);
+    }
+
+    return res.json({
+      success: true,
+      summary,
+      updatedAt: now
+    });
+  } catch (error: any) {
+    console.error("Erro no Second Brain synthesize:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Erro ao processar síntese comportamental com Second Brain."
+    });
+  }
+});
+
 // API Route: Generate personalized copy/script for a lead
 app.post("/api/gemini/generate-message", async (req, res) => {
   try {
-    const { clientName, clientInterest, clientNotes, goal, clientStatus } = req.body;
+    const { clientName, clientInterest, clientNotes, goal, clientStatus, secondBrainSummary } = req.body;
 
     if (!clientName) {
       return res.status(400).json({ error: "O nome do cliente é obrigatório." });
     }
 
-    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho.
+    const systemPrompt = `Você é o Merlin, um assistente virtual e especialista em copywriting para corretores de imóveis de alto desempenho com metodologia humanizada do Second Brain.
 Seu objetivo é criar mensagens de abordagem curtas, humanas, extremamente persuasivas e amigáveis para envio via WhatsApp ou Email.
-Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+Evite textos excessivamente formais, robóticos, artificiais ou repletos de jargões técnicos. Seja simpático, natural, direto ao ponto e focado em gerar conexão genuína. Use quebras de linha e emojis com moderação para tornar a leitura agradável.`;
+
+    let secondBrainContext = "";
+    if (secondBrainSummary && typeof secondBrainSummary === "object") {
+      secondBrainContext = `
+- Síntese Comportamental do Lead (Second Brain):
+  * Dor Emocional / Momento: ${secondBrainSummary.emotionalPain || "Não identificada"}
+  * Principal Objeção: ${secondBrainSummary.keyObjection || "Não identificada"}
+  * Critério de Decisão: ${secondBrainSummary.decisionCriteria || "Não especificado"}
+  * Ângulo Recomendado: ${secondBrainSummary.recommendedAngle || "Abordagem consultiva"}
+  * Nível de Urgência: ${secondBrainSummary.urgencyLevel || "Média"}
+*Diretriz Second Brain*: Use esses pontos comportamentais para criar um gancho natural, tratando as objeções de forma sutil e empática sem parecer vendedor insistente.`;
+    }
 
     const userPrompt = `Crie um script personalizado de abordagem rápida para o seguinte cliente:
 - Nome do Cliente: ${clientName}
@@ -1620,6 +1750,7 @@ Evite textos excessivamente formais, robóticos, artificiais ou repletos de jarg
 - Perfil/Notas do Cliente: ${clientNotes || "Sem observações adicionais"}
 - Etapa atual do Funil: ${clientStatus || "Lead Novo"}
 - Objetivo da mensagem: ${goal || "Fazer um contato inicial para entender as necessidades"}
+${secondBrainContext}
 
 Instruções Adicionais:
 - Escreva a mensagem em português do Brasil.

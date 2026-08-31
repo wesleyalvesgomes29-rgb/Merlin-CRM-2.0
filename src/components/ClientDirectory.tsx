@@ -24,7 +24,8 @@ import {
   Sparkles,
   ChevronRight,
   Clock,
-  UserCheck
+  UserCheck,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -687,6 +688,15 @@ export default function ClientDirectory({
                             <span>Sem retorno</span>
                           </span>
                         )}
+                        {client.secondBrainSummary && (
+                          <span 
+                            title={`Second Brain: ${client.secondBrainSummary.recommendedAngle}`}
+                            className="text-[9px] font-bold text-[#FD7A00] bg-[#FD7A00]/15 px-1.5 py-0.5 rounded-md border border-[#FD7A00]/30 flex items-center gap-1"
+                          >
+                            <Brain className="h-3 w-3" />
+                            <span>Second Brain</span>
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-[#888888]">
@@ -853,13 +863,24 @@ export default function ClientDirectory({
 
                 {/* Card Actions */}
                 <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-[#2A2A2A]">
-                  <button
-                    onClick={() => onSelectClient(client.id)}
-                    className="text-xs font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Ver Ficha</span>
-                    <ChevronRight className="h-3 w-3" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => onSelectClient(client.id)}
+                      className="text-xs font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Ver Ficha</span>
+                      <ChevronRight className="h-3 w-3" />
+                    </button>
+
+                    {client.secondBrainSummary && (
+                      <span 
+                        title={`Second Brain: ${client.secondBrainSummary.recommendedAngle}`}
+                        className="p-1 bg-[#FD7A00]/15 text-[#FD7A00] rounded-md flex items-center"
+                      >
+                        <Brain className="h-3 w-3" />
+                      </span>
+                    )}
+                  </div>
 
                   <div className="flex items-center gap-1.5">
                     <a

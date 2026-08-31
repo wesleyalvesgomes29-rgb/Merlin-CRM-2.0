@@ -22,6 +22,15 @@ export interface CommentEntry {
   text: string;
 }
 
+export interface SecondBrainSummary {
+  emotionalPain: string;
+  keyObjection: string;
+  decisionCriteria: string;
+  recommendedAngle: string;
+  suggestedNextAction: string;
+  urgencyLevel: 'Alta' | 'Média' | 'Baixa';
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -38,6 +47,8 @@ export interface Client {
   email?: string;
   empreendimento?: string;
   origem?: string;
+  secondBrainSummary?: SecondBrainSummary | string;
+  secondBrainUpdatedAt?: string;
 }
 
 export interface Tag {

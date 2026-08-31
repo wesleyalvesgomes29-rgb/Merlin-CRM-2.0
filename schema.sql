@@ -59,8 +59,19 @@ CREATE TABLE IF NOT EXISTS clients (
   next_contact_date TEXT,
   contact_count INTEGER NOT NULL DEFAULT 0,
   last_contact_date TEXT,
+  second_brain_summary TEXT, -- JSON stringificado da síntese comportamental do lead
+  second_brain_updated_at TEXT, -- Data/hora ISO da última síntese
   created_at TEXT NOT NULL,
   updated_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Tabela de Memória Comportamental e Diretrizes do Corretor (Second Brain Global)
+CREATE TABLE IF NOT EXISTS broker_memory (
+  user_id TEXT PRIMARY KEY,
+  communication_style TEXT,
+  custom_rules TEXT,
+  updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

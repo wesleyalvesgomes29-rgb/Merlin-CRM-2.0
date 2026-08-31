@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Client, Tag, ClientStatus, CommentEntry, Task } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Client, Tag, ClientStatus, CommentEntry, Task, SecondBrainSummary } from '../types';
 import { getClientAlerts, getDaysSinceContact, getStoredTasks, saveStoredTasks, getLocalTodayStr, formatDateBRL } from '../lib/storage';
 import { generateTaskId, generateHistoryId } from '../lib/idUtils';
 import { openGoogleCalendarEvent } from '../lib/calendarUtils';
@@ -24,7 +24,16 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
-  CalendarPlus
+  CalendarPlus,
+  Brain,
+  RefreshCw,
+  Copy,
+  Send,
+  Zap,
+  Target,
+  ShieldAlert,
+  Heart,
+  Compass
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import DocumentsTab from '../modules/documents/components/DocumentsTab';
@@ -63,7 +72,27 @@ export default function ClientDetails({
   const [origem, setOrigem] = useState(client.origem || '');
 
   const [isEditingGeneral, setIsEditingGeneral] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'informacoes' | 'historico' | 'atendimentos' | 'agenda' | 'documentos'>('informacoes');
+  const [activeSubTab, setActiveSubTab] = useState<'informacoes' | 'historico' | 'atendimentos' | 'agenda' | 'documentos' | 'second-brain'>('informacoes');
+
+  // Second Brain states
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [synthesisError, setSynthesisError] = useState<string | null>(null);
+  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false);
+  const [generatedMessage, setGeneratedMessage] = useState('');
+  const [messageGoal, setMessageGoal] = useState('Quebra-gelo amigável e sondagem de momento');
+  const [copiedMessage, setCopiedMessage] = useState(false);
+
+  const parsedSecondBrain = useMemo<SecondBrainSummary | null>(() => {
+    if (!client.secondBrainSummary) return null;
+    if (typeof client.secondBrainSummary === 'string') {
+      try {
+        return JSON.parse(client.secondBrainSummary);
+      } catch {
+        return null;
+      }
+    }
+    return client.secondBrainSummary;
+  }, [client.secondBrainSummary]);
 
   // Agenda sub-tab states
   const [clientTasks, setClientTasks] = useState<Task[]>([]);
@@ -273,6 +302,83 @@ export default function ClientDetails({
     setNewComment('');
   };
 
+  // Second Brain Handlers
+  const handleSynthesizeSecondBrain = async () => {
+    setIsSynthesizing(true);
+    setSynthesisError(null);
+    try {
+      const res = await fetch('/api/gemini/second-brain/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: client.id,
+          clientData: client
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Erro ao sintetizar lead com Second Brain');
+      }
+
+      const updatedClient: Client = {
+        ...client,
+        secondBrainSummary: data.summary,
+        secondBrainUpdatedAt: data.updatedAt,
+        history: [
+          {
+            id: generateHistoryId('h_sb'),
+            date: new Date().toISOString(),
+            action: `🧠 Síntese comportamental Second Brain atualizada via IA`
+          },
+          ...client.history
+        ]
+      };
+
+      onUpdateClient(updatedClient);
+    } catch (err: any) {
+      console.error('Erro na síntese Second Brain:', err);
+      setSynthesisError(err.message || 'Falha ao processar síntese.');
+    } finally {
+      setIsSynthesizing(false);
+    }
+  };
+
+  const handleGenerateMessage = async () => {
+    setIsGeneratingMessage(true);
+    try {
+      const res = await fetch('/api/gemini/generate-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName: client.name,
+          clientInterest: client.empreendimento,
+          clientNotes: client.notes,
+          goal: messageGoal,
+          clientStatus: client.status,
+          secondBrainSummary: client.secondBrainSummary
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao gerar mensagem');
+      }
+      setGeneratedMessage(data.text || '');
+    } catch (err: any) {
+      console.error('Erro ao gerar mensagem:', err);
+    } finally {
+      setIsGeneratingMessage(false);
+    }
+  };
+
+  const handleCopyMessage = () => {
+    if (!generatedMessage) return;
+    navigator.clipboard.writeText(generatedMessage);
+    setCopiedMessage(true);
+    setTimeout(() => setCopiedMessage(false), 2500);
+  };
+
   const STATUS_LIST: ClientStatus[] = [
     'Lead Novo',
     'Contato',
@@ -433,6 +539,20 @@ export default function ClientDetails({
           >
             <Calendar className="h-3.5 w-3.5" />
             <span>Agenda ({clientTasks.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveSubTab('second-brain')}
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold transition-all relative border-b-2 whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'second-brain'
+                ? 'border-[#FD7A00] text-[#FD7A00]'
+                : 'border-transparent text-slate-500 dark:text-[#888888] hover:text-slate-800 dark:hover:text-white'
+            }`}
+          >
+            <Brain className="h-3.5 w-3.5 text-[#FD7A00]" />
+            <span>Second Brain</span>
+            {client.secondBrainSummary && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+            )}
           </button>
           <button
             onClick={() => setActiveSubTab('documentos')}
@@ -649,6 +769,67 @@ export default function ClientDetails({
                         </p>
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION: SECOND BRAIN QUICK INSIGHT BANNER */}
+              <div className="bg-gradient-to-br from-amber-500/10 via-[#FD7A00]/5 to-transparent border border-[#FD7A00]/25 p-4 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-[#FD7A00]/15 text-[#FD7A00] rounded-xl">
+                      <Brain className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">Second Brain • Síntese Comportamental</h4>
+                      <span className="text-[10px] text-slate-500 dark:text-[#888888]">
+                        {client.secondBrainUpdatedAt 
+                          ? `Atualizado em ${new Date(client.secondBrainUpdatedAt).toLocaleDateString('pt-BR')} às ${new Date(client.secondBrainUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` 
+                          : 'Ainda não sintetizado com IA'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveSubTab('second-brain')}
+                    className="text-xs font-bold text-[#FD7A00] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Abrir Dossiê</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {parsedSecondBrain ? (
+                  <div className="space-y-2 pt-1 border-t border-[#FD7A00]/15">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-[#888888]">Urgência:</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                        parsedSecondBrain.urgencyLevel === 'Alta'
+                          ? 'bg-rose-500/15 text-[#FB7185]'
+                          : parsedSecondBrain.urgencyLevel === 'Baixa'
+                          ? 'bg-slate-500/15 text-slate-400'
+                          : 'bg-amber-500/15 text-[#FD7A00]'
+                      }`}>
+                        {parsedSecondBrain.urgencyLevel === 'Alta' ? '🔥 Alta' : parsedSecondBrain.urgencyLevel === 'Baixa' ? '💤 Baixa' : '⚡ Média'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700 dark:text-[#E5E5E5] line-clamp-2">
+                      <strong className="text-slate-900 dark:text-white">🎯 Gancho Persuasivo:</strong> {parsedSecondBrain.recommendedAngle}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between pt-1 border-t border-[#FD7A00]/15">
+                    <p className="text-[11px] text-slate-500 dark:text-[#888888]">
+                      Mapeie dores emocionais, medos ocultos e objeções com metodologia humanizada.
+                    </p>
+                    <button
+                      onClick={handleSynthesizeSecondBrain}
+                      disabled={isSynthesizing}
+                      className="px-3 py-1.5 bg-[#FD7A00] hover:bg-[#E85D00] text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+                    >
+                      <Sparkles className={`h-3.5 w-3.5 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                      <span>{isSynthesizing ? 'Analisando...' : 'Sintetizar com IA'}</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -976,6 +1157,228 @@ export default function ClientDetails({
                   ))
                 )}
               </div>
+            </div>
+          )}
+
+          {/* TAB: SECOND BRAIN */}
+          {activeSubTab === 'second-brain' && (
+            <div className="space-y-5">
+              {/* Header Info & Action */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 dark:bg-[#161616] p-4 rounded-2xl border border-slate-200 dark:border-[#2A2A2A]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-gradient-to-br from-[#FF9800] via-[#FD7A00] to-[#E85D00] text-[#0B0B0B] rounded-xl shadow-xs shrink-0">
+                    <Brain className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>Second Brain • Inteligência Comportamental</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-[#888888]">
+                      Síntese psicológica, mapeamento de dores e metodologia comercial humanizada.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSynthesizeSecondBrain}
+                  disabled={isSynthesizing}
+                  className="px-4 py-2 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-xs transition-all shrink-0 active:scale-95"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                  <span>{isSynthesizing ? 'Sintetizando Lead...' : client.secondBrainSummary ? 'Atualizar Síntese' : 'Sintetizar Lead com IA'}</span>
+                </button>
+              </div>
+
+              {synthesisError && (
+                <div className="bg-rose-500/10 border border-rose-500/25 rounded-xl p-3 text-xs text-[#FB7185] flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>{synthesisError}</span>
+                </div>
+              )}
+
+              {parsedSecondBrain ? (
+                <div className="space-y-4">
+                  {/* Status & Urgency Bar */}
+                  <div className="flex items-center justify-between bg-white dark:bg-[#161616] p-3.5 rounded-2xl border border-slate-200 dark:border-[#2A2A2A]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 dark:text-[#888888] font-medium">Nível de Urgência Identificado:</span>
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                        parsedSecondBrain.urgencyLevel === 'Alta'
+                          ? 'bg-rose-500/15 text-[#FB7185] border border-rose-500/30'
+                          : parsedSecondBrain.urgencyLevel === 'Baixa'
+                          ? 'bg-slate-500/15 text-slate-400 border border-slate-500/30'
+                          : 'bg-amber-500/15 text-[#FD7A00] border border-amber-500/30'
+                      }`}>
+                        {parsedSecondBrain.urgencyLevel === 'Alta' ? '🔥 Alta Prioridade' : parsedSecondBrain.urgencyLevel === 'Baixa' ? '💤 Baixa Prioridade' : '⚡ Média Prioridade'}
+                      </span>
+                    </div>
+
+                    {client.secondBrainUpdatedAt && (
+                      <span className="text-[10px] text-slate-400 dark:text-[#888888] font-mono">
+                        Última leitura: {new Date(client.secondBrainUpdatedAt).toLocaleDateString('pt-BR')} às {new Date(client.secondBrainUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Highlight: Recommended Angle */}
+                  <div className="bg-gradient-to-br from-[#FD7A00]/15 via-amber-500/10 to-transparent border border-[#FD7A00]/30 rounded-2xl p-4 sm:p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 text-[#FD7A00]">
+                      <Target className="h-4 w-4" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider">🎯 Gancho Persuasivo &amp; Tom Recomendado</h4>
+                    </div>
+                    <p className="text-xs sm:text-sm text-slate-800 dark:text-[#E5E5E5] font-medium leading-relaxed">
+                      {parsedSecondBrain.recommendedAngle}
+                    </p>
+                  </div>
+
+                  {/* 3 Behavioral Pillars */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Emotional Pain */}
+                    <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 space-y-2 shadow-2xs">
+                      <div className="flex items-center gap-2 text-rose-500">
+                        <Heart className="h-4 w-4" />
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider">Dor &amp; Momento de Vida</h4>
+                      </div>
+                      <p className="text-xs text-slate-700 dark:text-[#CCCCCC] leading-relaxed">
+                        {parsedSecondBrain.emotionalPain}
+                      </p>
+                    </div>
+
+                    {/* Key Objection */}
+                    <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 space-y-2 shadow-2xs">
+                      <div className="flex items-center gap-2 text-amber-500">
+                        <ShieldAlert className="h-4 w-4" />
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider">Principal Objeção</h4>
+                      </div>
+                      <p className="text-xs text-slate-700 dark:text-[#CCCCCC] leading-relaxed">
+                        {parsedSecondBrain.keyObjection}
+                      </p>
+                    </div>
+
+                    {/* Decision Criteria */}
+                    <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 space-y-2 shadow-2xs">
+                      <div className="flex items-center gap-2 text-emerald-500">
+                        <Compass className="h-4 w-4" />
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider">Fator Decisivo</h4>
+                      </div>
+                      <p className="text-xs text-slate-700 dark:text-[#CCCCCC] leading-relaxed">
+                        {parsedSecondBrain.decisionCriteria}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Suggested Next Action */}
+                  <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center gap-2 text-blue-500 dark:text-blue-400">
+                      <Zap className="h-4 w-4" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider">🚀 Próxima Ação Tática Sugerida</h4>
+                    </div>
+                    <p className="text-xs text-slate-800 dark:text-[#E5E5E5] font-medium leading-relaxed">
+                      {parsedSecondBrain.suggestedNextAction}
+                    </p>
+                  </div>
+
+                  {/* AI Copywriter based on Second Brain */}
+                  <div className="bg-slate-50 dark:bg-[#161616] border border-slate-200 dark:border-[#2A2A2A] rounded-2xl p-4 sm:p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-slate-900 dark:text-white">
+                        <MessageSquare className="h-4 w-4 text-[#FD7A00]" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider">Gerador de Mensagem Humanizada (Copywriting IA)</h4>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-[#FD7A00]/10 text-[#FD7A00] rounded-md">
+                        Metodologia Comercial
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase text-slate-400 dark:text-[#888888]">
+                        Objetivo do Contato:
+                      </label>
+                      <div className="flex flex-wrap sm:flex-nowrap gap-2">
+                        <select
+                          value={messageGoal}
+                          onChange={(e) => setMessageGoal(e.target.value)}
+                          className="flex-1 text-xs bg-white dark:bg-[#222222] border border-slate-200 dark:border-[#2A2A2A] rounded-xl p-2.5 text-slate-800 dark:text-white focus:border-[#FD7A00] focus:ring-1 focus:ring-[#FD7A00]"
+                        >
+                          <option value="Quebra-gelo amigável e sondagem de momento">Quebra-gelo amigável e sondagem de momento</option>
+                          <option value="Convite irresistível para visita ao decorado/imóvel">Convite irresistível para visita ao decorado/imóvel</option>
+                          <option value="Reaquecimento de lead parado com oferta especial">Reaquecimento de lead parado com oferta especial</option>
+                          <option value="Superar objeção de fluxo de pagamento com simulação">Superar objeção de fluxo de pagamento com simulação</option>
+                          <option value="Apresentação consultiva de lançamento exclusivo">Apresentação consultiva de lançamento exclusivo</option>
+                        </select>
+
+                        <button
+                          onClick={handleGenerateMessage}
+                          disabled={isGeneratingMessage}
+                          className="px-4 py-2.5 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs whitespace-nowrap active:scale-95"
+                        >
+                          <Sparkles className={`h-3.5 w-3.5 ${isGeneratingMessage ? 'animate-spin' : ''}`} />
+                          <span>{isGeneratingMessage ? 'Gerando Script...' : 'Gerar Script'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {generatedMessage && (
+                      <div className="space-y-3 pt-2">
+                        <div className="bg-emerald-500/10 dark:bg-emerald-950/25 border border-emerald-500/25 rounded-2xl p-4 relative">
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block mb-1.5 flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Script Pronto para Envio (WhatsApp / Email)
+                          </span>
+                          <p className="text-xs text-slate-800 dark:text-[#E5E5E5] whitespace-pre-wrap leading-relaxed">
+                            {generatedMessage}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={handleCopyMessage}
+                            className="px-3 py-1.5 bg-white dark:bg-[#222222] hover:bg-slate-100 dark:hover:bg-[#2A2A2A] border border-slate-200 dark:border-[#2A2A2A] text-slate-700 dark:text-[#E5E5E5] text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            <span>{copiedMessage ? 'Copiado! ✓' : 'Copiar Texto'}</span>
+                          </button>
+
+                          <a
+                            href={`https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(generatedMessage)}`}
+                            target="_blank"
+                            referrerPolicy="no-referrer"
+                            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Enviar no WhatsApp</span>
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Empty State */
+                <div className="text-center py-10 px-6 bg-slate-50 dark:bg-[#161616] border border-dashed border-slate-200 dark:border-[#2A2A2A] rounded-3xl space-y-4">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-amber-500/20 via-[#FD7A00]/20 to-transparent flex items-center justify-center text-[#FD7A00]">
+                    <Brain className="h-7 w-7" />
+                  </div>
+
+                  <div className="max-w-md mx-auto space-y-1.5">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Nenhuma síntese comportamental gerada ainda
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-[#888888] leading-relaxed">
+                      O Second Brain analisa o perfil, observações, etiquetas e todas as anotações do lead para mapear dores emocionais, momento de vida, objeções ocultas e o melhor gancho de fechamento.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleSynthesizeSecondBrain}
+                    disabled={isSynthesizing}
+                    className="px-5 py-2.5 bg-gradient-to-r from-[#FF9800] via-[#FD7A00] to-[#E85D00] hover:brightness-105 text-[#0B0B0B] text-xs font-bold rounded-xl inline-flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md active:scale-95 transition-all"
+                  >
+                    <Sparkles className={`h-4 w-4 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                    <span>{isSynthesizing ? 'Analisando Histórico do Lead...' : 'Gerar Síntese com IA'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

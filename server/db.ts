@@ -41,6 +41,7 @@ export interface DatabaseSchema {
   tasks: Record<string, any>;
   sales: Record<string, any>;
   tags: Record<string, any>;
+  broker_memory?: Record<string, any>;
   meta: {
     lastSyncedAt: string;
     version: number;
@@ -110,6 +111,7 @@ function getInitialDatabase(): DatabaseSchema {
     tasks: {},
     sales: {},
     tags: {},
+    broker_memory: {},
     meta: {
       lastSyncedAt: now,
       version: 2
@@ -207,6 +209,10 @@ export function initLocalDatabase(): DatabaseSchema {
     }
     if (!parsed.invite_codes) {
       parsed.invite_codes = {};
+      updated = true;
+    }
+    if (!parsed.broker_memory) {
+      parsed.broker_memory = {};
       updated = true;
     }
 
@@ -610,6 +616,8 @@ export function getAllData(userId?: string) {
     return {
       ...c,
       tags: Array.isArray(c.tags) ? c.tags : (typeof c.tags === 'string' ? JSON.parse(c.tags || '[]') : []),
+      secondBrainSummary: c.second_brain_summary || c.secondBrainSummary || undefined,
+      secondBrainUpdatedAt: c.second_brain_updated_at || c.secondBrainUpdatedAt || undefined,
       comments: clientComments,
       history: clientHistory
     };
@@ -730,4 +738,43 @@ export function syncAllData(payload: {
       tags: Object.keys(db.tags).length
     }
   };
+}
+
+export function saveClientSecondBrainSummary(clientId: string, summary: any, updatedAt?: string) {
+  const db = readDatabase();
+  const client = db.clients[clientId];
+  if (!client) {
+    return { success: false, error: 'Cliente não encontrado' };
+  }
+
+  const now = updatedAt || new Date().toISOString();
+  client.second_brain_summary = summary;
+  client.secondBrainSummary = summary;
+  client.second_brain_updated_at = now;
+  client.secondBrainUpdatedAt = now;
+  client.updatedAt = now;
+
+  writeDatabase(db);
+  return { success: true, client };
+}
+
+export function getBrokerMemory(userId: string) {
+  const db = readDatabase();
+  return db.broker_memory?.[userId] || null;
+}
+
+export function saveBrokerMemory(userId: string, data: { communication_style?: string; custom_rules?: string }) {
+  const db = readDatabase();
+  if (!db.broker_memory) {
+    db.broker_memory = {};
+  }
+  const now = new Date().toISOString();
+  db.broker_memory[userId] = {
+    user_id: userId,
+    communication_style: data.communication_style || '',
+    custom_rules: data.custom_rules || '',
+    updated_at: now
+  };
+  writeDatabase(db);
+  return { success: true, memory: db.broker_memory[userId] };
 }
